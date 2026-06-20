@@ -8,7 +8,7 @@ Sistema de gestion de restaurantes multi-tenant.
 - **Monorepo:** Turborepo + Bun workspaces
 - **API:** Hono + Drizzle ORM + WebSockets (Bun nativo)
 - **Web:** Next.js 16 + TailwindCSS v4 + shadcn/ui
-- **DB:** PostgreSQL 17 + Redis 7
+- **DB:** PostgreSQL 18 + Redis 7
 
 ## Estructura
 
@@ -31,7 +31,7 @@ restai/
 
 - [Bun](https://bun.sh) >= 1.3
 - [Docker](https://www.docker.com/) (para Redis)
-- [PostgreSQL](https://www.postgresql.org/) 17 (instalado localmente)
+- [PostgreSQL](https://www.postgresql.org/) 18 (instalado localmente)
 
 ## Instalacion
 
