@@ -1,13 +1,13 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types.js";
 import { zValidator } from "@hono/zod-validator";
-import { eq, and, gte, lte, sql, desc, inArray, count, sum } from "drizzle-orm";
+import { eq, and, gte, lt, sql, desc, inArray, count, sum } from "drizzle-orm";
 import { db, schema } from "@restai/db";
 import { reportQuerySchema } from "@restai/validators";
 import { authMiddleware } from "../middleware/auth.js";
 import { tenantMiddleware, requireBranch } from "../middleware/tenant.js";
 import { requirePermission } from "../middleware/rbac.js";
-import { peruStartOfDay } from "../lib/timezone.js";
+import { peruStartOfDay, peruEndOfDay } from "../lib/timezone.js";
 
 const reports = new Hono<AppEnv>();
 
@@ -82,10 +82,21 @@ reports.get(
     const { startDate, endDate } = c.req.valid("query");
     const tenant = c.get("tenant") as any;
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    // Set end to end of day
-    end.setHours(23, 59, 59, 999);
+    // Guard ordering: startDate must not be after endDate
+    if (new Date(startDate) > new Date(endDate)) {
+      return c.json(
+        { success: false, error: { code: "BAD_REQUEST", message: "Rango de fechas inválido" } },
+        400,
+      );
+    }
+
+    // Range bounds in Peru timezone (UTC-5). peruEndOfDay returns start of next
+    // day, so use an exclusive upper bound (lt) to include the whole end day.
+    const start = peruStartOfDay(new Date(startDate));
+    const end = peruEndOfDay(new Date(endDate));
+
+    // Bucket key: calendar day in Peru local time
+    const dayBucket = sql<string>`to_char(${schema.orders.created_at} AT TIME ZONE 'America/Lima', 'YYYY-MM-DD')`;
 
     // Totals for the range
     const [totals] = await db
@@ -98,9 +109,10 @@ reports.get(
       .from(schema.orders)
       .where(
         and(
+          eq(schema.orders.organization_id, tenant.organizationId),
           eq(schema.orders.branch_id, tenant.branchId),
           gte(schema.orders.created_at, start),
-          lte(schema.orders.created_at, end),
+          lt(schema.orders.created_at, end),
           eq(schema.orders.status, "completed"),
         ),
       );
@@ -108,21 +120,22 @@ reports.get(
     // Daily breakdown
     const dailyData = await db
       .select({
-        date: sql<string>`to_char(${schema.orders.created_at}, 'YYYY-MM-DD')`,
+        date: dayBucket,
         orders: count(),
         revenue: sum(schema.orders.total),
       })
       .from(schema.orders)
       .where(
         and(
+          eq(schema.orders.organization_id, tenant.organizationId),
           eq(schema.orders.branch_id, tenant.branchId),
           gte(schema.orders.created_at, start),
-          lte(schema.orders.created_at, end),
+          lt(schema.orders.created_at, end),
           eq(schema.orders.status, "completed"),
         ),
       )
-      .groupBy(sql`to_char(${schema.orders.created_at}, 'YYYY-MM-DD')`)
-      .orderBy(sql`to_char(${schema.orders.created_at}, 'YYYY-MM-DD')`);
+      .groupBy(dayBucket)
+      .orderBy(dayBucket);
 
     // Payment method breakdown - join completed orders with payments
     const completedOrders = await db
@@ -130,9 +143,10 @@ reports.get(
       .from(schema.orders)
       .where(
         and(
+          eq(schema.orders.organization_id, tenant.organizationId),
           eq(schema.orders.branch_id, tenant.branchId),
           gte(schema.orders.created_at, start),
-          lte(schema.orders.created_at, end),
+          lt(schema.orders.created_at, end),
           eq(schema.orders.status, "completed"),
         ),
       );
@@ -188,9 +202,17 @@ reports.get(
     const { startDate, endDate } = c.req.valid("query");
     const tenant = c.get("tenant") as any;
 
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
+    // Guard ordering: startDate must not be after endDate
+    if (new Date(startDate) > new Date(endDate)) {
+      return c.json(
+        { success: false, error: { code: "BAD_REQUEST", message: "Rango de fechas inválido" } },
+        400,
+      );
+    }
+
+    // Range bounds in Peru timezone (UTC-5); exclusive upper bound (lt).
+    const start = peruStartOfDay(new Date(startDate));
+    const end = peruEndOfDay(new Date(endDate));
 
     const limitParam = c.req.query("limit");
     const limit = limitParam ? Math.min(parseInt(limitParam, 10) || 10, 50) : 10;
@@ -201,9 +223,10 @@ reports.get(
       .from(schema.orders)
       .where(
         and(
+          eq(schema.orders.organization_id, tenant.organizationId),
           eq(schema.orders.branch_id, tenant.branchId),
           gte(schema.orders.created_at, start),
-          lte(schema.orders.created_at, end),
+          lt(schema.orders.created_at, end),
           eq(schema.orders.status, "completed"),
         ),
       );

@@ -70,6 +70,8 @@ payments.get("/summary", requirePermission("payments:read"), async (c) => {
 payments.get("/unpaid-orders", requirePermission("payments:read"), async (c) => {
   const tenant = c.get("tenant") as any;
 
+  // Filter unpaid in SQL (total_paid < orders.total) before the limit so we
+  // never drop unpaid orders by truncating the candidate set first.
   const result = await db
     .select({
       id: schema.orders.id,
@@ -78,7 +80,7 @@ payments.get("/unpaid-orders", requirePermission("payments:read"), async (c) => 
       total: schema.orders.total,
       status: schema.orders.status,
       created_at: schema.orders.created_at,
-      total_paid: sql<number>`COALESCE((SELECT SUM(amount)::int FROM payments WHERE payments.order_id = ${schema.orders.id} AND payments.status = 'completed'), 0)`,
+      total_paid: sql<number>`COALESCE((SELECT SUM(amount)::bigint FROM payments WHERE payments.order_id = ${schema.orders.id} AND payments.status = 'completed'), 0)::int`,
       table_number: schema.tables.number,
     })
     .from(schema.orders)
@@ -89,18 +91,16 @@ payments.get("/unpaid-orders", requirePermission("payments:read"), async (c) => 
         eq(schema.orders.branch_id, tenant.branchId),
         eq(schema.orders.organization_id, tenant.organizationId),
         sql`${schema.orders.status} != 'cancelled'`,
+        sql`COALESCE((SELECT SUM(amount)::bigint FROM payments WHERE payments.order_id = ${schema.orders.id} AND payments.status = 'completed'), 0) < ${schema.orders.total}`,
       ),
     )
     .orderBy(desc(schema.orders.created_at))
     .limit(50);
 
-  // Filter to only unpaid/partial orders
-  const unpaid = result
-    .filter((o) => o.total_paid < o.total)
-    .map((o) => ({
-      ...o,
-      remaining: o.total - o.total_paid,
-    }));
+  const unpaid = result.map((o) => ({
+    ...o,
+    remaining: o.total - o.total_paid,
+  }));
 
   return c.json({ success: true, data: unpaid });
 });
@@ -159,67 +159,76 @@ payments.post(
     const body = c.req.valid("json");
     const tenant = c.get("tenant") as any;
 
-    // Verify order belongs to branch
-    const [order] = await db
-      .select()
-      .from(schema.orders)
-      .where(
-        and(
-          eq(schema.orders.id, body.orderId),
-          eq(schema.orders.branch_id, tenant.branchId),
-        ),
-      )
-      .limit(1);
+    // Serialize concurrent payments for the same order: lock the order row,
+    // re-sum prior completed payments inside the tx, then cap/reject and insert.
+    const txResult = await db.transaction(async (tx) => {
+      // Verify order belongs to tenant + lock the row FOR UPDATE
+      const [order] = await tx
+        .select()
+        .from(schema.orders)
+        .where(
+          and(
+            eq(schema.orders.id, body.orderId),
+            eq(schema.orders.organization_id, tenant.organizationId),
+            eq(schema.orders.branch_id, tenant.branchId),
+          ),
+        )
+        .limit(1)
+        .for("update");
 
-    if (!order) {
-      return c.json(
-        { success: false, error: { code: "NOT_FOUND", message: "Orden no encontrada" } },
-        404,
-      );
+      if (!order) {
+        return { error: { status: 404 as const, code: "NOT_FOUND", message: "Orden no encontrada" } };
+      }
+
+      // Re-sum previous completed payments for this order inside the tx
+      const [prevPayments] = await tx
+        .select({
+          total_paid: sum(schema.payments.amount),
+        })
+        .from(schema.payments)
+        .where(
+          and(
+            eq(schema.payments.order_id, body.orderId),
+            eq(schema.payments.status, "completed"),
+          ),
+        );
+
+      const previouslyPaid = Number(prevPayments?.total_paid || 0);
+
+      const remaining = order.total - previouslyPaid;
+      if (remaining <= 0) {
+        return { error: { status: 400 as const, code: "BAD_REQUEST", message: "La orden ya está pagada" } };
+      }
+
+      // Cap payment to remaining balance
+      const effectiveAmount = Math.min(body.amount, remaining);
+
+      const [payment] = await tx
+        .insert(schema.payments)
+        .values({
+          order_id: body.orderId,
+          organization_id: tenant.organizationId,
+          branch_id: tenant.branchId,
+          method: body.method,
+          amount: effectiveAmount,
+          reference: body.reference,
+          tip: body.tip,
+          status: "completed",
+        })
+        .returning();
+
+      const totalPaid = previouslyPaid + effectiveAmount;
+      const fullyPaid = totalPaid >= order.total;
+
+      return { error: null, order, payment, totalPaid, fullyPaid };
+    });
+
+    if (txResult.error) {
+      const { status, code, message } = txResult.error;
+      return c.json({ success: false, error: { code, message } }, status);
     }
 
-    // Sum previous payments for this order
-    const [prevPayments] = await db
-      .select({
-        total_paid: sum(schema.payments.amount),
-      })
-      .from(schema.payments)
-      .where(
-        and(
-          eq(schema.payments.order_id, body.orderId),
-          eq(schema.payments.status, "completed"),
-        ),
-      );
-
-    const previouslyPaid = Number(prevPayments?.total_paid || 0);
-
-    const remaining = order.total - previouslyPaid;
-    if (remaining <= 0) {
-      return c.json(
-        { success: false, error: { code: "BAD_REQUEST", message: "La orden ya está pagada" } },
-        400,
-      );
-    }
-
-    // Cap payment to remaining balance
-    const effectiveAmount = Math.min(body.amount, remaining);
-
-    const [payment] = await db
-      .insert(schema.payments)
-      .values({
-        order_id: body.orderId,
-        organization_id: tenant.organizationId,
-        branch_id: tenant.branchId,
-        method: body.method,
-        amount: effectiveAmount,
-        reference: body.reference,
-        tip: body.tip,
-        status: "completed",
-      })
-      .returning();
-
-    const totalPaid = previouslyPaid + effectiveAmount;
-    const fullyPaid = totalPaid >= order.total;
+    const { order, payment, totalPaid, fullyPaid } = txResult;
 
     return c.json({
       success: true,
@@ -265,6 +274,7 @@ payments.get(
       .where(
         and(
           eq(schema.payments.id, id),
+          eq(schema.payments.organization_id, tenant.organizationId),
           eq(schema.payments.branch_id, tenant.branchId),
         ),
       )

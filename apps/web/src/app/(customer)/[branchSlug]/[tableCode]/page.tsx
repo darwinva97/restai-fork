@@ -39,9 +39,6 @@ function useCustomerEntryLocalState() {
   const [existingSession, setExistingSession] = useState<{
     hasSession: boolean;
     status?: string;
-    sessionId?: string;
-    customerName?: string;
-    token?: string;
   } | null>(null);
   const [checkingSession, setCheckingSession] = useState(true);
 
@@ -88,6 +85,19 @@ function CustomerEntryPageContent({
     setCheckingSession,
   } = useCustomerEntryLocalState();
   const setSession = useCustomerStore((s) => s.setSession);
+  // The server no longer hands an existing session's token to anyone scanning
+  // the QR (that was a credential-disclosure vulnerability). A legitimate owner
+  // reconnects using the token already persisted in their own browser session.
+  const savedToken = useCustomerStore((s) => s.token);
+  const savedSessionId = useCustomerStore((s) => s.sessionId);
+  const savedBranchSlug = useCustomerStore((s) => s.branchSlug);
+  const savedTableCode = useCustomerStore((s) => s.tableCode);
+  const savedCustomerName = useCustomerStore((s) => s.customerName);
+  const canReconnect =
+    !!savedToken &&
+    !!savedSessionId &&
+    savedBranchSlug === branchSlug &&
+    savedTableCode === tableCode;
 
   const checkExistingSession = useCallback(() => {
     setCheckingSession(true);
@@ -118,13 +128,13 @@ function CustomerEntryPageContent({
   }, [checkExistingSession]);
 
   const handleReconnect = () => {
-    if (existingSession?.token && existingSession?.sessionId) {
+    if (canReconnect && savedToken && savedSessionId) {
       setSession({
-        token: existingSession.token,
-        sessionId: existingSession.sessionId,
+        token: savedToken,
+        sessionId: savedSessionId,
         branchSlug,
         tableCode,
-        customerName: existingSession.customerName,
+        customerName: savedCustomerName ?? undefined,
       });
       router.push(`/${branchSlug}/${tableCode}/menu`);
     }
@@ -177,23 +187,18 @@ function CustomerEntryPageContent({
           return;
         }
 
-        // If the API returned an existing active session, go directly to menu
-        if (result.data.existing) {
-          setSession({
-            token: result.data.token,
-            sessionId: result.data.sessionId,
-            branchSlug,
-            tableCode,
-            customerName: data.customerName,
-          });
+        // If the table got an active session between our check and this submit,
+        // the server returns { status: "active" } WITHOUT a token (it never
+        // discloses another customer's credential). Surface the occupied state.
+        if (result.data.status === "active" || !result.data.token) {
+          setExistingSession({ hasSession: true, status: "active" });
           setLoading(false);
-          router.push(`/${branchSlug}/${tableCode}/menu`);
           return;
         }
 
         setSession({
           token: result.data.token,
-          sessionId: result.data.session.id,
+          sessionId: result.data.sessionId ?? result.data.session?.id,
           branchSlug,
           tableCode,
           customerName: data.customerName,
@@ -215,7 +220,8 @@ function CustomerEntryPageContent({
     );
   }
 
-  // Show reconnection option if an active session exists
+  // An active session exists on this table. Only the owner (whose token is
+  // saved in this browser) may continue it; anyone else just sees it occupied.
   if (existingSession?.hasSession && existingSession.status === "active") {
     return (
       <div className="p-4 mt-8 space-y-4">
@@ -224,21 +230,31 @@ function CustomerEntryPageContent({
             <div className="mx-auto mb-4 flex h-16 w-16 items-center justify-center rounded-full bg-green-500/10">
               <RefreshCw className="h-8 w-8 text-green-600" />
             </div>
-            <CardTitle className="text-2xl">Sesion activa</CardTitle>
+            <CardTitle className="text-2xl">
+              {canReconnect ? "Sesion activa" : "Mesa ocupada"}
+            </CardTitle>
             <CardDescription>
-              Esta mesa tiene una sesion activa de {existingSession.customerName}
+              {canReconnect
+                ? "Tienes una sesion activa en esta mesa."
+                : "Esta mesa ya tiene una sesion activa. Si crees que es un error, pide ayuda al personal."}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Button className="w-full" onClick={handleReconnect}>
-              Reconectar a sesion existente
-            </Button>
+            {canReconnect && (
+              <Button className="w-full" onClick={handleReconnect}>
+                Continuar mi sesion
+              </Button>
+            )}
             <Button
               variant="outline"
               className="w-full"
-              onClick={() => setExistingSession(null)}
+              onClick={() => {
+                setExistingSession(null);
+                setCheckingSession(true);
+                void checkExistingSession();
+              }}
             >
-              Iniciar nueva sesion
+              Verificar de nuevo
             </Button>
           </CardContent>
         </Card>

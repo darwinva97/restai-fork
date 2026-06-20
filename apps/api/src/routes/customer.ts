@@ -118,30 +118,31 @@ customer.post(
     const [table] = await db.select().from(schema.tables).where(and(eq(schema.tables.qr_code, tableCode), eq(schema.tables.branch_id, branch.id))).limit(1);
     if (!table) return c.json({ success: false, error: { code: "NOT_FOUND", message: "Mesa no encontrada" } }, 404);
 
-    // Check if table already has an active session - return existing token
+    // If table already has an active session, do NOT disclose its token/row to a
+    // new caller (that would hijack another customer's session). The legitimate
+    // owner reconnects with the token they already possess. Return only status.
     const [activeSession] = await db
-      .select()
+      .select({ id: schema.tableSessions.id })
       .from(schema.tableSessions)
-      .where(and(eq(schema.tableSessions.table_id, table.id), eq(schema.tableSessions.status, "active")))
+      .where(and(
+        eq(schema.tableSessions.organization_id, branch.organization_id),
+        eq(schema.tableSessions.branch_id, branch.id),
+        eq(schema.tableSessions.table_id, table.id),
+        eq(schema.tableSessions.status, "active"),
+      ))
       .limit(1);
 
     if (activeSession) {
-      return c.json({
-        success: true,
-        data: {
-          session: activeSession,
-          token: activeSession.token,
-          sessionId: activeSession.id,
-          existing: true,
-        },
-      });
+      return c.json({ success: true, data: { status: "active" } });
     }
 
     // Check if table has a pending session (non-expired)
     const [pendingSession] = await db
-      .select()
+      .select({ id: schema.tableSessions.id })
       .from(schema.tableSessions)
       .where(and(
+        eq(schema.tableSessions.organization_id, branch.organization_id),
+        eq(schema.tableSessions.branch_id, branch.id),
         eq(schema.tableSessions.table_id, table.id),
         eq(schema.tableSessions.status, "pending"),
         gte(schema.tableSessions.expires_at, new Date()),
@@ -161,6 +162,7 @@ customer.post(
         .select({ id: schema.tableSessions.id })
         .from(schema.tableSessions)
         .where(and(
+          eq(schema.tableSessions.organization_id, branch.organization_id),
           eq(schema.tableSessions.branch_id, branch.id),
           eq(schema.tableSessions.customer_phone, body.customerPhone),
           eq(schema.tableSessions.status, "pending"),
@@ -225,7 +227,7 @@ customer.get("/:branchSlug/:tableCode/check-session", async (c) => {
   }
 
   const [table] = await db
-    .select()
+    .select({ id: schema.tables.id })
     .from(schema.tables)
     .where(and(eq(schema.tables.qr_code, tableCode), eq(schema.tables.branch_id, branch.id)))
     .limit(1);
@@ -234,16 +236,15 @@ customer.get("/:branchSlug/:tableCode/check-session", async (c) => {
     return c.json({ success: true, data: { hasSession: false } });
   }
 
-  // Check for active session
+  // Check for active session. Do NOT leak the sessionId or customer_name to an
+  // anonymous caller; only report whether a session exists and its status.
   const [activeSession] = await db
-    .select({
-      id: schema.tableSessions.id,
-      status: schema.tableSessions.status,
-      customer_name: schema.tableSessions.customer_name,
-    })
+    .select({ id: schema.tableSessions.id })
     .from(schema.tableSessions)
     .where(
       and(
+        eq(schema.tableSessions.organization_id, branch.organization_id),
+        eq(schema.tableSessions.branch_id, branch.id),
         eq(schema.tableSessions.table_id, table.id),
         eq(schema.tableSessions.status, "active"),
       ),
@@ -251,27 +252,17 @@ customer.get("/:branchSlug/:tableCode/check-session", async (c) => {
     .limit(1);
 
   if (activeSession) {
-    return c.json({
-      success: true,
-      data: {
-        hasSession: true,
-        status: "active",
-        sessionId: activeSession.id,
-        customerName: activeSession.customer_name,
-      },
-    });
+    return c.json({ success: true, data: { hasSession: true, status: "active" } });
   }
 
   // Check for pending session (non-expired)
   const [pendingSession] = await db
-    .select({
-      id: schema.tableSessions.id,
-      status: schema.tableSessions.status,
-      customer_name: schema.tableSessions.customer_name,
-    })
+    .select({ id: schema.tableSessions.id })
     .from(schema.tableSessions)
     .where(
       and(
+        eq(schema.tableSessions.organization_id, branch.organization_id),
+        eq(schema.tableSessions.branch_id, branch.id),
         eq(schema.tableSessions.table_id, table.id),
         eq(schema.tableSessions.status, "pending"),
         gte(schema.tableSessions.expires_at, new Date()),
@@ -280,15 +271,7 @@ customer.get("/:branchSlug/:tableCode/check-session", async (c) => {
     .limit(1);
 
   if (pendingSession) {
-    return c.json({
-      success: true,
-      data: {
-        hasSession: true,
-        status: "pending",
-        sessionId: pendingSession.id,
-        customerName: pendingSession.customer_name,
-      },
-    });
+    return c.json({ success: true, data: { hasSession: true, status: "pending" } });
   }
 
   return c.json({ success: true, data: { hasSession: false } });
@@ -336,12 +319,16 @@ customer.post(
       );
     }
 
-    // Check if table already has an active session - return existing token
+    // If table already has an active session, do NOT disclose its token/row to a
+    // new caller (that would hijack another customer's session). The legitimate
+    // owner reconnects with the token they already possess. Return only status.
     const [activeSession] = await db
-      .select()
+      .select({ id: schema.tableSessions.id })
       .from(schema.tableSessions)
       .where(
         and(
+          eq(schema.tableSessions.organization_id, branch.organization_id),
+          eq(schema.tableSessions.branch_id, branch.id),
           eq(schema.tableSessions.table_id, table.id),
           eq(schema.tableSessions.status, "active"),
         ),
@@ -349,23 +336,17 @@ customer.post(
       .limit(1);
 
     if (activeSession) {
-      return c.json({
-        success: true,
-        data: {
-          session: activeSession,
-          token: activeSession.token,
-          sessionId: activeSession.id,
-          existing: true,
-        },
-      });
+      return c.json({ success: true, data: { status: "active" } });
     }
 
     // Check if table has a pending session (non-expired)
     const [pendingSession] = await db
-      .select()
+      .select({ id: schema.tableSessions.id })
       .from(schema.tableSessions)
       .where(
         and(
+          eq(schema.tableSessions.organization_id, branch.organization_id),
+          eq(schema.tableSessions.branch_id, branch.id),
           eq(schema.tableSessions.table_id, table.id),
           eq(schema.tableSessions.status, "pending"),
           gte(schema.tableSessions.expires_at, new Date()),
@@ -392,6 +373,7 @@ customer.post(
         .select({ id: schema.tableSessions.id })
         .from(schema.tableSessions)
         .where(and(
+          eq(schema.tableSessions.organization_id, branch.organization_id),
           eq(schema.tableSessions.branch_id, branch.id),
           eq(schema.tableSessions.customer_phone, body.customerPhone),
           eq(schema.tableSessions.status, "pending"),
@@ -451,17 +433,66 @@ customer.post(
 );
 
 // GET /:branchSlug/:tableCode/session-status/:sessionId - Poll session status (public)
+// Scoped by branch+table so a caller cannot poll arbitrary sessions across the
+// tenant, and returns ONLY the status (no customer_name / no extra row data).
+// If a customer token is supplied, its `sub` must match the requested session id.
 customer.get("/:branchSlug/:tableCode/session-status/:sessionId", async (c) => {
+  const branchSlug = c.req.param("branchSlug");
+  const tableCode = c.req.param("tableCode");
   const sessionId = c.req.param("sessionId");
 
+  // If the caller presents a customer token, it must be for this exact session.
+  const header = c.req.header("Authorization");
+  if (header && header.startsWith("Bearer ")) {
+    try {
+      const payload = (await verifyAccessToken(header.slice(7))) as any;
+      if (payload.role === "customer" && payload.sub !== sessionId) {
+        return c.json(
+          { success: false, error: { code: "FORBIDDEN", message: "Sesion inválida" } },
+          403,
+        );
+      }
+    } catch {
+      // Ignore invalid tokens; fall through to scoped public lookup.
+    }
+  }
+
+  const [branch] = await db
+    .select({ id: schema.branches.id })
+    .from(schema.branches)
+    .where(eq(schema.branches.slug, branchSlug))
+    .limit(1);
+
+  if (!branch) {
+    return c.json(
+      { success: false, error: { code: "NOT_FOUND", message: "Sesion no encontrada" } },
+      404,
+    );
+  }
+
+  const [table] = await db
+    .select({ id: schema.tables.id })
+    .from(schema.tables)
+    .where(and(eq(schema.tables.qr_code, tableCode), eq(schema.tables.branch_id, branch.id)))
+    .limit(1);
+
+  if (!table) {
+    return c.json(
+      { success: false, error: { code: "NOT_FOUND", message: "Sesion no encontrada" } },
+      404,
+    );
+  }
+
   const [session] = await db
-    .select({
-      id: schema.tableSessions.id,
-      status: schema.tableSessions.status,
-      customer_name: schema.tableSessions.customer_name,
-    })
+    .select({ status: schema.tableSessions.status })
     .from(schema.tableSessions)
-    .where(eq(schema.tableSessions.id, sessionId))
+    .where(
+      and(
+        eq(schema.tableSessions.id, sessionId),
+        eq(schema.tableSessions.branch_id, branch.id),
+        eq(schema.tableSessions.table_id, table.id),
+      ),
+    )
     .limit(1);
 
   if (!session) {
@@ -471,7 +502,7 @@ customer.get("/:branchSlug/:tableCode/session-status/:sessionId", async (c) => {
     );
   }
 
-  return c.json({ success: true, data: session });
+  return c.json({ success: true, data: { status: session.status } });
 });
 
 // GET /:branchSlug/menu/items/:itemId/modifiers - Get modifier groups for item (public)
@@ -576,10 +607,13 @@ const customerAuth = async (c: any, next: any) => {
   }
 };
 
-// Middleware to validate that the customer's session is still active
+// Middleware to validate that the customer's session is still active.
+// Resolve the session by the token's OWN session id (user.sub), not by table_id.
+// This ties every action to the exact session the token was minted for, and we
+// additionally assert it matches the token's org/branch/table so a reused token
+// cannot act against a different tenant/table.
 const requireActiveSession = async (c: any, next: any) => {
   const user = c.get("user") as any;
-  const tableId = user.table;
 
   const [session] = await db
     .select({
@@ -590,7 +624,10 @@ const requireActiveSession = async (c: any, next: any) => {
     .from(schema.tableSessions)
     .where(
       and(
-        eq(schema.tableSessions.table_id, tableId),
+        eq(schema.tableSessions.id, user.sub),
+        eq(schema.tableSessions.organization_id, user.org),
+        eq(schema.tableSessions.branch_id, user.branch),
+        eq(schema.tableSessions.table_id, user.table),
         eq(schema.tableSessions.status, "active"),
       ),
     )
@@ -826,9 +863,12 @@ customer.post("/orders", customerAuth, requireActiveSession, zValidator("json", 
 });
 
 // GET /orders/:id - Get order status (customer auth)
-customer.get("/orders/:id", customerAuth, zValidator("param", idParamSchema), async (c) => {
+// Scoped to the caller's OWN session (not just branch) to prevent IDOR; a
+// customer can only read orders that belong to their active table session.
+customer.get("/orders/:id", customerAuth, requireActiveSession, zValidator("param", idParamSchema), async (c) => {
   const { id } = c.req.valid("param");
   const user = c.get("user") as any;
+  const session = c.get("session") as any;
 
   const [order] = await db
     .select()
@@ -836,7 +876,9 @@ customer.get("/orders/:id", customerAuth, zValidator("param", idParamSchema), as
     .where(
       and(
         eq(schema.orders.id, id),
+        eq(schema.orders.organization_id, user.org),
         eq(schema.orders.branch_id, user.branch),
+        eq(schema.orders.table_session_id, session.id),
       ),
     )
     .limit(1);
@@ -936,16 +978,21 @@ customer.post(
   async (c) => {
     const { id } = c.req.valid("param");
     const user = c.get("user") as any;
+    const session = c.get("session") as any;
     const branchId = user.branch;
+    const organizationId = user.org;
 
-    // Verify order belongs to customer's branch
+    // Verify order belongs to the caller's OWN active session (not just branch)
+    // to prevent IDOR; also scope by organization for tenant isolation.
     const [order] = await db
       .select()
       .from(schema.orders)
       .where(
         and(
           eq(schema.orders.id, id),
+          eq(schema.orders.organization_id, organizationId),
           eq(schema.orders.branch_id, branchId),
+          eq(schema.orders.table_session_id, session.id),
         ),
       )
       .limit(1);
@@ -972,95 +1019,122 @@ customer.post(
       );
     }
 
-    // Update order status to cancelled
-    await db
-      .update(schema.orders)
-      .set({ status: "cancelled" })
-      .where(eq(schema.orders.id, id));
-
-    // Update all order items to cancelled
-    if (items.length > 0) {
-      await db
-        .update(schema.orderItems)
+    // Perform the entire cancel-and-revert sequence atomically so a partial
+    // failure cannot leave coupons/points/redemptions in an inconsistent state.
+    const cancelled = await db.transaction(async (tx) => {
+      // Atomic state transition: only cancel if the order is not already
+      // cancelled/closed. Act only if a row came back.
+      const updatedOrders = await tx
+        .update(schema.orders)
         .set({ status: "cancelled" })
-        .where(eq(schema.orderItems.order_id, id));
-    }
+        .where(
+          and(
+            eq(schema.orders.id, id),
+            eq(schema.orders.organization_id, organizationId),
+            eq(schema.orders.branch_id, branchId),
+            eq(schema.orders.table_session_id, session.id),
+            inArray(schema.orders.status, ["pending", "preparing"]),
+          ),
+        )
+        .returning({ id: schema.orders.id });
 
-    // Revert coupon if order had one
-    const [redemption] = await db
-      .select()
-      .from(schema.couponRedemptions)
-      .where(eq(schema.couponRedemptions.order_id, id))
-      .limit(1);
-
-    if (redemption) {
-      // Decrement current_uses
-      await db
-        .update(schema.coupons)
-        .set({ current_uses: sql`GREATEST(${schema.coupons.current_uses} - 1, 0)` })
-        .where(eq(schema.coupons.id, redemption.coupon_id));
-
-      // Delete redemption record
-      await db
-        .delete(schema.couponRedemptions)
-        .where(eq(schema.couponRedemptions.id, redemption.id));
-
-      // Clear used_at on assignment if customer is known
-      if (order.customer_id) {
-        await db
-          .update(schema.couponAssignments)
-          .set({ used_at: null })
-          .where(
-            and(
-              eq(schema.couponAssignments.coupon_id, redemption.coupon_id),
-              eq(schema.couponAssignments.customer_id, order.customer_id),
-            ),
-          );
+      if (updatedOrders.length === 0) {
+        return false;
       }
-    }
 
-    // Revert reward redemption if order had one
-    const [rewardRedemption] = await db
-      .select({
-        id: schema.rewardRedemptions.id,
-        customer_loyalty_id: schema.rewardRedemptions.customer_loyalty_id,
-        reward_id: schema.rewardRedemptions.reward_id,
-      })
-      .from(schema.rewardRedemptions)
-      .where(eq(schema.rewardRedemptions.order_id, id))
-      .limit(1);
+      // Update all order items to cancelled
+      if (items.length > 0) {
+        await tx
+          .update(schema.orderItems)
+          .set({ status: "cancelled" })
+          .where(eq(schema.orderItems.order_id, id));
+      }
 
-    if (rewardRedemption) {
-      const [reward] = await db
-        .select({ points_cost: schema.rewards.points_cost, name: schema.rewards.name })
-        .from(schema.rewards)
-        .where(eq(schema.rewards.id, rewardRedemption.reward_id))
+      // Revert coupon if order had one
+      const [redemption] = await tx
+        .select()
+        .from(schema.couponRedemptions)
+        .where(eq(schema.couponRedemptions.order_id, id))
         .limit(1);
 
-      if (reward) {
-        // Refund points
-        await db
-          .update(schema.customerLoyalty)
-          .set({
-            points_balance: sql`${schema.customerLoyalty.points_balance} + ${reward.points_cost}`,
-          })
-          .where(eq(schema.customerLoyalty.id, rewardRedemption.customer_loyalty_id));
+      if (redemption) {
+        // Decrement current_uses
+        await tx
+          .update(schema.coupons)
+          .set({ current_uses: sql`GREATEST(${schema.coupons.current_uses} - 1, 0)` })
+          .where(eq(schema.coupons.id, redemption.coupon_id));
 
-        // Record refund transaction
-        await db.insert(schema.loyaltyTransactions).values({
-          customer_loyalty_id: rewardRedemption.customer_loyalty_id,
-          order_id: id,
-          points: reward.points_cost,
-          type: "adjusted",
-          description: `Reembolso por cancelación: ${reward.name}`,
-        });
+        // Delete redemption record
+        await tx
+          .delete(schema.couponRedemptions)
+          .where(eq(schema.couponRedemptions.id, redemption.id));
+
+        // Clear used_at on assignment if customer is known
+        if (order.customer_id) {
+          await tx
+            .update(schema.couponAssignments)
+            .set({ used_at: null })
+            .where(
+              and(
+                eq(schema.couponAssignments.coupon_id, redemption.coupon_id),
+                eq(schema.couponAssignments.customer_id, order.customer_id),
+              ),
+            );
+        }
       }
 
-      // Unlink redemption from order so it can be reused
-      await db
-        .update(schema.rewardRedemptions)
-        .set({ order_id: null })
-        .where(eq(schema.rewardRedemptions.id, rewardRedemption.id));
+      // Revert reward redemption if order had one
+      const [rewardRedemption] = await tx
+        .select({
+          id: schema.rewardRedemptions.id,
+          customer_loyalty_id: schema.rewardRedemptions.customer_loyalty_id,
+          reward_id: schema.rewardRedemptions.reward_id,
+        })
+        .from(schema.rewardRedemptions)
+        .where(eq(schema.rewardRedemptions.order_id, id))
+        .limit(1);
+
+      if (rewardRedemption) {
+        const [reward] = await tx
+          .select({ points_cost: schema.rewards.points_cost, name: schema.rewards.name })
+          .from(schema.rewards)
+          .where(eq(schema.rewards.id, rewardRedemption.reward_id))
+          .limit(1);
+
+        if (reward) {
+          // Refund points
+          await tx
+            .update(schema.customerLoyalty)
+            .set({
+              points_balance: sql`${schema.customerLoyalty.points_balance} + ${reward.points_cost}`,
+            })
+            .where(eq(schema.customerLoyalty.id, rewardRedemption.customer_loyalty_id));
+
+          // Record refund transaction
+          await tx.insert(schema.loyaltyTransactions).values({
+            customer_loyalty_id: rewardRedemption.customer_loyalty_id,
+            order_id: id,
+            points: reward.points_cost,
+            type: "adjusted",
+            description: `Reembolso por cancelación: ${reward.name}`,
+          });
+        }
+
+        // Unlink redemption from order so it can be reused
+        await tx
+          .update(schema.rewardRedemptions)
+          .set({ order_id: null })
+          .where(eq(schema.rewardRedemptions.id, rewardRedemption.id));
+      }
+
+      return true;
+    });
+
+    if (!cancelled) {
+      return c.json(
+        { success: false, error: { code: "CONFLICT", message: "El pedido ya está siendo preparado" } },
+        409,
+      );
     }
 
     // Broadcast cancellation
@@ -1072,6 +1146,16 @@ customer.post(
       },
       timestamp: Date.now(),
     });
+    if (order.table_session_id) {
+      await wsManager.publish(`session:${order.table_session_id}`, {
+        type: "order:cancelled",
+        payload: {
+          orderId: id,
+          orderNumber: order.order_number,
+        },
+        timestamp: Date.now(),
+      });
+    }
 
     return c.json({ success: true, data: { message: "Pedido cancelado exitosamente" } });
   },
@@ -1124,11 +1208,17 @@ customer.post(
       );
     }
 
-    // Get table number for the notification
+    // Get table number for the notification (scoped to the token's tenant/branch)
     const [table] = await db
       .select({ number: schema.tables.number })
       .from(schema.tables)
-      .where(eq(schema.tables.id, tableId))
+      .where(
+        and(
+          eq(schema.tables.id, tableId),
+          eq(schema.tables.organization_id, user.org),
+          eq(schema.tables.branch_id, branchId),
+        ),
+      )
       .limit(1);
 
     if (!table) {

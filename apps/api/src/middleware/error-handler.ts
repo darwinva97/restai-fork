@@ -90,6 +90,19 @@ export const errorHandler: ErrorHandler = (err, c) => {
     );
   }
 
+  // Postgres unique-violation (SQLSTATE 23505) -> 409 Conflict.
+  // postgres.js exposes the SQLSTATE on `.code`; drizzle may wrap it under `.cause`.
+  const pgCode = (err as any).code ?? (err as any).cause?.code;
+  if (pgCode === "23505") {
+    return c.json(
+      {
+        success: false,
+        error: { code: "CONFLICT", message: "El registro ya existe o entra en conflicto con uno existente" },
+      },
+      409,
+    );
+  }
+
   // Unhandled errors
   logger.error("Unhandled error", { error: err.message, stack: err.stack });
 

@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import type { AppEnv } from "../types.js";
 import { zValidator } from "@hono/zod-validator";
-import { eq, and, desc, gte, lte } from "drizzle-orm";
+import { eq, and, desc, gte, lte, sum } from "drizzle-orm";
 import { db, schema } from "@restai/db";
 import { createInvoiceSchema, idParamSchema } from "@restai/validators";
 import { authMiddleware } from "../middleware/auth.js";
@@ -62,13 +62,14 @@ invoices.post(
       );
     }
 
-    // Get order
+    // Get order (scoped to tenant: org + branch)
     const [order] = await db
       .select()
       .from(schema.orders)
       .where(
         and(
           eq(schema.orders.id, body.orderId),
+          eq(schema.orders.organization_id, tenant.organizationId),
           eq(schema.orders.branch_id, tenant.branchId),
         ),
       )
@@ -81,49 +82,122 @@ invoices.post(
       );
     }
 
-    // Generate series/number + insert in a transaction with row locking
-    const invoice = await db.transaction(async (tx) => {
-      const prefix = body.type === "boleta" ? "B001" : "F001";
+    // The order must be fully paid before a fiscal document can be issued.
+    const [paid] = await db
+      .select({ total_paid: sum(schema.payments.amount) })
+      .from(schema.payments)
+      .where(
+        and(
+          eq(schema.payments.order_id, body.orderId),
+          eq(schema.payments.status, "completed"),
+        ),
+      );
 
-      const lastInvoice = await tx
-        .select({ number: schema.invoices.number })
-        .from(schema.invoices)
-        .where(
-          and(
-            eq(schema.invoices.branch_id, tenant.branchId),
-            eq(schema.invoices.series, prefix),
-          ),
-        )
-        .orderBy(desc(schema.invoices.number))
-        .limit(1)
-        .for("update");
+    const totalPaid = Number(paid?.total_paid || 0);
+    if (totalPaid < order.total) {
+      return c.json(
+        {
+          success: false,
+          error: {
+            code: "ORDER_NOT_PAID",
+            message: "La orden debe estar totalmente pagada antes de emitir el comprobante",
+          },
+        },
+        409,
+      );
+    }
 
-      const nextNumber = (lastInvoice[0]?.number || 0) + 1;
+    // Enforce one invoice per order.
+    const [existingInvoice] = await db
+      .select({ id: schema.invoices.id })
+      .from(schema.invoices)
+      .where(eq(schema.invoices.order_id, body.orderId))
+      .limit(1);
 
-      const subtotal = Math.round(order.total / 1.18);
-      const igv = order.total - subtotal;
+    if (existingInvoice) {
+      return c.json(
+        {
+          success: false,
+          error: { code: "INVOICE_EXISTS", message: "La orden ya tiene un comprobante emitido" },
+        },
+        409,
+      );
+    }
 
-      const [created] = await tx
-        .insert(schema.invoices)
-        .values({
-          order_id: body.orderId,
-          organization_id: tenant.organizationId,
-          branch_id: tenant.branchId,
-          type: body.type,
-          series: prefix,
-          number: nextNumber,
-          customer_name: body.customerName,
-          customer_doc_type: body.customerDocType,
-          customer_doc_number: body.customerDocNumber,
-          subtotal,
-          igv,
-          total: order.total,
-          sunat_status: "pending",
-        })
-        .returning();
+    const prefix = body.type === "boleta" ? "B001" : "F001";
 
-      return created;
-    });
+    // Fiscal amounts come straight from the order's stored integer-cent fields:
+    // taxable base = subtotal - discount, IGV = order.tax, total includes delivery fee.
+    const subtotal = order.subtotal - order.discount;
+    const igv = order.tax;
+    const total = order.total;
+
+    // Concurrent inserts cannot be fully serialized by SELECT max ... FOR UPDATE
+    // (the first row has nothing to lock), so retry on the unique-violation of
+    // uq_invoices_branch_series_number and recompute the next number until we win.
+    const MAX_RETRIES = 5;
+    let invoice: typeof schema.invoices.$inferSelect | undefined;
+
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        invoice = await db.transaction(async (tx) => {
+          const lastInvoice = await tx
+            .select({ number: schema.invoices.number })
+            .from(schema.invoices)
+            .where(
+              and(
+                eq(schema.invoices.branch_id, tenant.branchId),
+                eq(schema.invoices.series, prefix),
+              ),
+            )
+            .orderBy(desc(schema.invoices.number))
+            .limit(1)
+            .for("update");
+
+          const nextNumber = (lastInvoice[0]?.number || 0) + 1;
+
+          const [created] = await tx
+            .insert(schema.invoices)
+            .values({
+              order_id: body.orderId,
+              organization_id: tenant.organizationId,
+              branch_id: tenant.branchId,
+              type: body.type,
+              series: prefix,
+              number: nextNumber,
+              customer_name: body.customerName,
+              customer_doc_type: body.customerDocType,
+              customer_doc_number: body.customerDocNumber,
+              subtotal,
+              igv,
+              total,
+              sunat_status: "pending",
+            })
+            .returning();
+
+          return created;
+        });
+        break;
+      } catch (err: any) {
+        // 23505 = unique_violation. If it's the (branch, series, number) clash,
+        // another concurrent insert took our number — recompute and retry.
+        const code = err?.code ?? err?.cause?.code;
+        if (code === "23505" && attempt < MAX_RETRIES - 1) {
+          continue;
+        }
+        throw err;
+      }
+    }
+
+    if (!invoice) {
+      return c.json(
+        {
+          success: false,
+          error: { code: "CONFLICT", message: "No se pudo generar el número de comprobante, intente nuevamente" },
+        },
+        409,
+      );
+    }
 
     return c.json({ success: true, data: invoice }, 201);
   },
@@ -176,6 +250,7 @@ invoices.get(
       .where(
         and(
           eq(schema.invoices.id, id),
+          eq(schema.invoices.organization_id, tenant.organizationId),
           eq(schema.invoices.branch_id, tenant.branchId),
         ),
       )
