@@ -13,13 +13,18 @@ import { Minus, Plus, Trash2, ArrowLeft, ShoppingBag, Ticket, Check, X, ChevronD
 import { toast } from "sonner";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
-const TAX_RATE = 1800; // 18% IGV
+// Default IGV (18%, stored in basis points: 1800/10000). All totals computed
+// here are DISPLAY-ONLY ESTIMATES — the server recomputes and is authoritative.
+// We prefer the branch's tax_rate from the public /menu response when present.
+const DEFAULT_TAX_RATE = 1800; // 18% IGV
 
 function useCartPageLocalState() {
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sessionChecked, setSessionChecked] = useState(false);
+  // Branch tax rate (basis points). Display-only; server total is authoritative.
+  const [taxRate, setTaxRate] = useState<number>(DEFAULT_TAX_RATE);
   const [couponOpen, setCouponOpen] = useState(false);
   const [couponCode, setCouponCode] = useState("");
   const [couponLoading, setCouponLoading] = useState(false);
@@ -38,6 +43,8 @@ function useCartPageLocalState() {
     setError,
     sessionChecked,
     setSessionChecked,
+    taxRate,
+    setTaxRate,
     couponOpen,
     setCouponOpen,
     couponCode,
@@ -222,6 +229,8 @@ export default function CartPage({
     setError,
     sessionChecked,
     setSessionChecked,
+    taxRate,
+    setTaxRate,
     couponOpen,
     setCouponOpen,
     couponCode,
@@ -313,9 +322,34 @@ export default function CartPage({
     return () => clearTimeout(timeout);
   }, [loadDiscounts]);
 
+  // Prefer the branch tax_rate from the public menu when available; the menu
+  // endpoint is public so no auth is required. These totals remain estimates —
+  // the server recomputes the authoritative total on order creation.
+  const loadTaxRate = useCallback(() => {
+    void fetch(`${API_URL}/api/customer/${branchSlug}/${tableCode}/menu`)
+      .then((res) => res.json())
+      .then((data) => {
+        const rate = data?.data?.branch?.tax_rate;
+        if (typeof rate === "number" && rate > 0) {
+          setTaxRate(rate);
+        }
+      })
+      .catch(() => {
+        // Fall back to DEFAULT_TAX_RATE on any error.
+      });
+  }, [branchSlug, tableCode, setTaxRate]);
+
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      void loadTaxRate();
+    }, 0);
+    return () => clearTimeout(timeout);
+  }, [loadTaxRate]);
+
+  // Display-only estimates — server total is authoritative.
   const subtotal = getSubtotal();
-  const tax = getTax(TAX_RATE);
-  const total = getTotal(TAX_RATE);
+  const tax = getTax(taxRate);
+  const total = getTotal(taxRate);
 
   const handleValidateCoupon = () => {
     if (!couponCode.trim()) return;
@@ -407,7 +441,7 @@ export default function CartPage({
   const totalDiscount = couponDiscount + redemptionDiscount;
   // IGV is calculated on (subtotal - discount) to match backend logic
   const taxableBase = subtotal - totalDiscount;
-  const adjustedTax = totalDiscount > 0 ? Math.round((taxableBase * TAX_RATE) / 10000) : tax;
+  const adjustedTax = totalDiscount > 0 ? Math.round((taxableBase * taxRate) / 10000) : tax;
   const adjustedTotal = totalDiscount > 0 ? taxableBase + adjustedTax : total;
 
   const handleConfirmOrder = () => {
@@ -743,7 +777,7 @@ export default function CartPage({
             </div>
           )}
           <div className="flex justify-between text-sm">
-            <span className="text-muted-foreground">IGV (18%)</span>
+            <span className="text-muted-foreground">IGV ({taxRate / 100}%)</span>
             <span className="font-medium">{formatCurrency(totalDiscount > 0 ? adjustedTax : tax)}</span>
           </div>
           <div className="border-t border-border pt-3">
