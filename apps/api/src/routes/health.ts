@@ -18,6 +18,9 @@ health.get("/", async (c) => {
   // El realtime se reporta por proveedor (sin acoplar Redis/ioredis aquí, para
   // que health corra también en runtimes serverless/edge).
   checks.realtime = getRealtimeProvider().name;
+  // DEBUG temporal:
+  checks._envProvider = process.env.REALTIME_PROVIDER ?? "unset";
+  checks._ablyKey = process.env.ABLY_API_KEY ? "present" : "absent";
 
   const allHealthy = checks.database === "ok";
 
