@@ -1,0 +1,226 @@
+---
+const APP_URL = "https://app.restai.bezenti.com";
+
+const features = [
+  {
+    icon: "🧾",
+    title: "Punto de venta (POS)",
+    desc: "Toma pedidos para mesa, mostrador o delivery desde un solo lugar, con carrito completo y cobro rápido.",
+  },
+  {
+    icon: "🍳",
+    title: "Cocina en tiempo real",
+    desc: "Las comandas llegan a un tablero Kanban al instante. La cocina ve, prepara y marca cada plato sin papel.",
+  },
+  {
+    icon: "📱",
+    title: "Pedidos por QR",
+    desc: "El cliente escanea el QR de su mesa, ve el menú, arma su pedido y llama al mozo desde su propio celular.",
+  },
+  {
+    icon: "🧮",
+    title: "Facturación SUNAT",
+    desc: "Emisión de boletas y facturas electrónicas con envío y resúmenes a SUNAT integrados en el flujo de cobro.",
+  },
+  {
+    icon: "🏢",
+    title: "Multi-sucursal",
+    desc: "Varias sedes bajo una misma cuenta, con aislamiento de datos por sucursal y control de personal y roles.",
+  },
+  {
+    icon: "📦",
+    title: "Inventario y fidelidad",
+    desc: "Control de stock con descuento automático y un programa de puntos para que tus clientes vuelvan.",
+  },
+];
+---
+
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>RestAI — Sistema de gestión para restaurantes</title>
+    <meta
+      name="description"
+      content="RestAI es el sistema todo-en-uno para restaurantes: POS, cocina en tiempo real, pedidos por QR, facturación electrónica SUNAT y multi-sucursal."
+    />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%F0%9F%8D%BD%EF%B8%8F%3C/text%3E%3C/svg%3E" />
+    <meta property="og:title" content="RestAI — Sistema de gestión para restaurantes" />
+    <meta property="og:description" content="POS, cocina en tiempo real, QR, facturación SUNAT y multi-sucursal." />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://restai.bezenti.com" />
+  </head>
+  <body>
+    <header class="nav">
+      <a class="brand" href="/">
+        <span class="brand-mark">🍽️</span> RestAI
+      </a>
+      <a class="btn btn-ghost" href={APP_URL}>Ingresar al panel</a>
+    </header>
+
+    <main>
+      <section class="hero">
+        <p class="eyebrow">Sistema de gestión para restaurantes</p>
+        <h1>Todo tu restaurante, <span class="grad">en una sola plataforma.</span></h1>
+        <p class="lead">
+          POS, cocina en tiempo real, pedidos por QR y facturación electrónica
+          SUNAT. Desde una sola mesa hasta varias sucursales, RestAI ordena tu
+          operación de principio a fin.
+        </p>
+        <div class="cta">
+          <a class="btn btn-primary" href={APP_URL}>Ingresar al panel →</a>
+          <a class="btn btn-ghost" href="#features">Ver características</a>
+        </div>
+      </section>
+
+      <section id="features" class="features">
+        {
+          features.map((f) => (
+            <article class="card">
+              <div class="card-icon">{f.icon}</div>
+              <h3>{f.title}</h3>
+              <p>{f.desc}</p>
+            </article>
+          ))
+        }
+      </section>
+
+      <section class="closing">
+        <h2>Listo para ordenar tu operación</h2>
+        <p>Entra al panel y empieza a gestionar tu restaurante hoy.</p>
+        <a class="btn btn-primary" href={APP_URL}>Ingresar al panel →</a>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span>© {new Date().getFullYear()} RestAI</span>
+      <nav>
+        <a href={APP_URL}>Panel</a>
+        <a href="https://api.restai.bezenti.com/health">Estado de la API</a>
+      </nav>
+    </footer>
+
+    <style is:global>
+      :root {
+        --bg: #0b0f17;
+        --bg-soft: #121826;
+        --fg: #e6eaf2;
+        --muted: #97a3b6;
+        --accent: #ff7849;
+        --accent-2: #ffb347;
+        --border: #1f2937;
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        margin: 0;
+        background:
+          radial-gradient(1100px 500px at 50% -10%, rgba(255, 120, 73, 0.16), transparent 60%),
+          var(--bg);
+        color: var(--fg);
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+      main { max-width: 1080px; margin: 0 auto; padding: 0 1.25rem; }
+      a { color: inherit; text-decoration: none; }
+
+      .nav {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 1.25rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+      }
+      .brand { font-weight: 700; font-size: 1.2rem; letter-spacing: -0.02em; }
+      .brand-mark { margin-right: 0.35rem; }
+
+      .btn {
+        display: inline-block;
+        padding: 0.7rem 1.15rem;
+        border-radius: 0.7rem;
+        font-weight: 600;
+        font-size: 0.95rem;
+        transition: transform 0.12s ease, opacity 0.12s ease, background 0.12s ease;
+        border: 1px solid transparent;
+      }
+      .btn:hover { transform: translateY(-1px); }
+      .btn-primary {
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        color: #1a1205;
+        box-shadow: 0 8px 24px rgba(255, 120, 73, 0.25);
+      }
+      .btn-ghost { border-color: var(--border); color: var(--fg); }
+      .btn-ghost:hover { background: var(--bg-soft); }
+
+      .hero { text-align: center; padding: 4rem 0 3.5rem; }
+      .eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 0.18em;
+        font-size: 0.78rem;
+        color: var(--accent-2);
+        margin: 0 0 0.75rem;
+      }
+      .hero h1 {
+        font-size: clamp(2.2rem, 6vw, 3.6rem);
+        line-height: 1.08;
+        letter-spacing: -0.03em;
+        margin: 0 auto 1.1rem;
+        max-width: 16ch;
+      }
+      .grad {
+        background: linear-gradient(135deg, var(--accent), var(--accent-2));
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      .lead { color: var(--muted); font-size: 1.15rem; max-width: 52ch; margin: 0 auto 2rem; }
+      .cta { display: flex; gap: 0.75rem; justify-content: center; flex-wrap: wrap; }
+
+      .features {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 1rem;
+        padding: 1.5rem 0 3rem;
+      }
+      .card {
+        background: var(--bg-soft);
+        border: 1px solid var(--border);
+        border-radius: 1rem;
+        padding: 1.5rem;
+      }
+      .card-icon { font-size: 1.8rem; }
+      .card h3 { margin: 0.6rem 0 0.4rem; font-size: 1.15rem; }
+      .card p { margin: 0; color: var(--muted); font-size: 0.97rem; }
+
+      .closing {
+        text-align: center;
+        background: var(--bg-soft);
+        border: 1px solid var(--border);
+        border-radius: 1.25rem;
+        padding: 3rem 1.5rem;
+        margin: 1rem 0 4rem;
+      }
+      .closing h2 { font-size: clamp(1.6rem, 4vw, 2.2rem); margin: 0 0 0.5rem; letter-spacing: -0.02em; }
+      .closing p { color: var(--muted); margin: 0 0 1.5rem; }
+
+      .foot {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 2rem 1.25rem 3rem;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 1rem;
+        color: var(--muted);
+        font-size: 0.9rem;
+        border-top: 1px solid var(--border);
+      }
+      .foot nav { display: flex; gap: 1.25rem; }
+      .foot nav a:hover { color: var(--fg); }
+    </style>
+  </body>
+</html>
