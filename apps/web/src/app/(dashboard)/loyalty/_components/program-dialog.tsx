@@ -31,15 +31,30 @@ export function ProgramDialog({
     name: editData?.name || "Programa de Puntos",
     pointsPerCurrencyUnit: editData?.points_per_currency_unit || 1,
     currencyPerPoint: editData?.currency_per_point || 100,
+    isActive: editData?.is_active ?? true,
+    // Empty string = nunca expira
+    pointsExpireAfterDays:
+      editData?.points_expire_after_days != null
+        ? String(editData.points_expire_after_days)
+        : "",
   });
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    const trimmedDays = form.pointsExpireAfterDays.trim();
+    const parsedDays = trimmedDays === "" ? null : parseInt(trimmedDays, 10);
+    if (parsedDays != null && (Number.isNaN(parsedDays) || parsedDays < 1)) {
+      toast.error("Los dias de expiracion deben ser un numero mayor o igual a 1");
+      return;
+    }
+
     const payload = {
       name: form.name,
       pointsPerCurrencyUnit: form.pointsPerCurrencyUnit,
       currencyPerPoint: form.currencyPerPoint,
-      isActive: true,
+      isActive: form.isActive,
+      pointsExpireAfterDays: parsedDays,
     };
 
     const mutation = isEdit ? updateProgram : createProgram;
@@ -91,6 +106,36 @@ export function ProgramDialog({
               onChange={(e) => setForm((p) => ({ ...p, currencyPerPoint: parseInt(e.target.value) || 100 }))}
             />
             <p className="text-xs text-muted-foreground">Valor en centimos de cada punto al canjear (100 = S/ 1.00)</p>
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="prog-expiry">Puntos expiran a los (dias)</Label>
+            <Input
+              id="prog-expiry"
+              type="number"
+              min={1}
+              placeholder="Nunca"
+              value={form.pointsExpireAfterDays}
+              onChange={(e) => setForm((p) => ({ ...p, pointsExpireAfterDays: e.target.value }))}
+            />
+            <p className="text-xs text-muted-foreground">Deja vacio para que los puntos nunca expiren</p>
+          </div>
+
+          {/* Active toggle */}
+          <div className="flex items-center justify-between rounded-lg border border-border p-3">
+            <div>
+              <Label htmlFor="prog-active" className="cursor-pointer">Programa activo</Label>
+              <p className="text-xs text-muted-foreground">Si esta inactivo, los clientes no acumulan puntos</p>
+            </div>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input
+                id="prog-active"
+                type="checkbox"
+                checked={form.isActive}
+                onChange={(e) => setForm((p) => ({ ...p, isActive: e.target.checked }))}
+                className="h-4 w-4 rounded border-input accent-primary"
+              />
+              {form.isActive ? "Activo" : "Inactivo"}
+            </label>
           </div>
 
           {/* Simulator */}

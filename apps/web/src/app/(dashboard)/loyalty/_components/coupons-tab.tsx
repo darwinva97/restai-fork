@@ -26,6 +26,7 @@ import {
   Tag,
   Send,
   Search,
+  Pencil,
 } from "lucide-react";
 import {
   useCoupons,
@@ -57,6 +58,15 @@ const couponStatusLabels: Record<string, { label: string; color: string }> = {
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-muted rounded ${className ?? ""}`} />;
+}
+
+// Derive the real status from expires_at (a coupon may be stored as "active"
+// but already past its expiry date). Returns one of: active | inactive | expired.
+function effectiveCouponStatus(coupon: any): string {
+  if (coupon.expires_at && new Date(coupon.expires_at) < new Date()) {
+    return "expired";
+  }
+  return coupon.status ?? "inactive";
 }
 
 function AssignCouponDialog({
@@ -218,17 +228,23 @@ function AssignCouponDialog({
 export function CouponsTab() {
   const [statusFilter, setStatusFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
+  // Status is filtered client-side so the "Expirado" state (derived from
+  // expires_at) is honored — the API only knows the stored status column.
   const { data, isLoading, error, refetch } = useCoupons({
-    status: statusFilter === "all" ? undefined : statusFilter,
     type: typeFilter === "all" ? undefined : typeFilter,
   });
   const deleteCoupon = useDeleteCoupon();
   const updateCoupon = useUpdateCoupon();
   const [showCreate, setShowCreate] = useState(false);
+  const [editCoupon, setEditCoupon] = useState<any>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
   const [assignCouponData, setAssignCouponData] = useState<any>(null);
 
-  const couponsList: any[] = data ?? [];
+  const allCoupons: any[] = data ?? [];
+  const couponsList: any[] =
+    statusFilter === "all"
+      ? allCoupons
+      : allCoupons.filter((c) => effectiveCouponStatus(c) === statusFilter);
 
   function handleCopyCode(code: string) {
     navigator.clipboard.writeText(code);
@@ -331,8 +347,8 @@ export function CouponsTab() {
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {couponsList.map((coupon: any) => {
-            const statusInfo = couponStatusLabels[coupon.status] || couponStatusLabels.inactive;
-            const isExpired = coupon.expires_at && new Date(coupon.expires_at) < new Date();
+            const status = effectiveCouponStatus(coupon);
+            const statusInfo = couponStatusLabels[status] || couponStatusLabels.inactive;
             return (
               <Card key={coupon.id} className="relative overflow-hidden">
                 {/* Coupon-style dashed border top */}
@@ -363,6 +379,13 @@ export function CouponsTab() {
                         <Send className="h-4 w-4 text-blue-600 dark:text-blue-400" />
                       </button>
                       <button
+                        onClick={() => setEditCoupon(coupon)}
+                        className="p-1.5 rounded hover:bg-muted"
+                        title="Editar cupon"
+                      >
+                        <Pencil className="h-4 w-4 text-muted-foreground" />
+                      </button>
+                      <button
                         onClick={() => handleToggleStatus(coupon)}
                         className="p-1.5 rounded hover:bg-muted"
                         title={coupon.status === "active" ? "Desactivar" : "Activar"}
@@ -377,7 +400,7 @@ export function CouponsTab() {
 
                   <div className="flex flex-wrap items-center gap-2 mb-3">
                     <span className={`text-xs px-2 py-1 rounded-full font-medium ${statusInfo.color}`}>
-                      {isExpired ? "Expirado" : statusInfo.label}
+                      {statusInfo.label}
                     </span>
                     <Badge variant="secondary" className="text-xs">
                       <Tag className="h-3 w-3 mr-1" />
@@ -415,6 +438,15 @@ export function CouponsTab() {
       )}
 
       <CreateCouponDialog open={showCreate} onOpenChange={setShowCreate} />
+
+      {editCoupon && (
+        <CreateCouponDialog
+          key={editCoupon.id}
+          open={!!editCoupon}
+          onOpenChange={(v) => { if (!v) setEditCoupon(null); }}
+          editData={editCoupon}
+        />
+      )}
 
       {assignCouponData && (
         <AssignCouponDialog

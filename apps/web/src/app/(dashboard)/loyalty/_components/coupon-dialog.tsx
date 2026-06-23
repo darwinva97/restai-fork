@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Input } from "@restai/ui/components/input";
 import { Label } from "@restai/ui/components/label";
 import { Button } from "@restai/ui/components/button";
@@ -14,9 +14,18 @@ import {
 } from "@restai/ui/components/dialog";
 import { DatePicker } from "@restai/ui/components/date-picker";
 import { RefreshCw } from "lucide-react";
-import { useCreateCoupon } from "@/hooks/use-coupons";
+import { useCreateCoupon, useUpdateCoupon } from "@/hooks/use-coupons";
 import { useMenuItems, useCategories } from "@/hooks/use-menu";
 import { toast } from "sonner";
+
+const couponTypeLabels: Record<string, string> = {
+  percentage: "Porcentaje de descuento (%)",
+  fixed: "Monto fijo de descuento",
+  item_free: "Item gratis",
+  item_discount: "Descuento en item especifico",
+  category_discount: "Descuento en categoria",
+  buy_x_get_y: "Compra X lleva Y",
+};
 
 function generateCouponCode(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -47,23 +56,38 @@ function formatCentsToSoles(value: number): string {
   return (value / 100).toFixed(2);
 }
 
-export function CreateCouponDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const createCoupon = useCreateCoupon();
-  const { data: menuItemsData } = useMenuItems();
-  const { data: categoriesData } = useCategories();
-  const menuItems: any[] = menuItemsData ?? [];
-  const categories: any[] = categoriesData ?? [];
-  const [form, setForm] = useState({
+// Convert an ISO/date string from the API into a YYYY-MM-DD string for DatePicker.
+function toDateInputValue(value: any): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toISOString().slice(0, 10);
+}
+
+type FormState = {
+  code: string;
+  name: string;
+  description: string;
+  type: string;
+  discountValue: number;
+  menuItemId: string;
+  categoryId: string;
+  buyQuantity: number;
+  getQuantity: number;
+  minOrderAmount: number;
+  maxDiscountAmount: number;
+  maxUsesTotal: number;
+  maxUsesPerCustomer: number;
+  startsAt: string;
+  expiresAt: string;
+};
+
+function emptyForm(): FormState {
+  return {
     code: generateCouponCode(),
     name: "",
     description: "",
-    type: "percentage" as string,
+    type: "percentage",
     discountValue: 10,
     menuItemId: "",
     categoryId: "",
@@ -75,11 +99,117 @@ export function CreateCouponDialog({
     maxUsesPerCustomer: 1,
     startsAt: "",
     expiresAt: "",
-  });
-  const [fixedDiscountInput, setFixedDiscountInput] = useState(formatCentsToSoles(50));
+  };
+}
+
+// Map an existing coupon (snake_case from API) into the editable form state.
+function couponToForm(coupon: any): FormState {
+  return {
+    code: coupon.code ?? "",
+    name: coupon.name ?? "",
+    description: coupon.description ?? "",
+    type: coupon.type ?? "percentage",
+    discountValue: coupon.discount_value ?? 0,
+    menuItemId: coupon.menu_item_id ?? "",
+    categoryId: coupon.category_id ?? "",
+    buyQuantity: coupon.buy_quantity ?? 2,
+    getQuantity: coupon.get_quantity ?? 1,
+    minOrderAmount: coupon.min_order_amount ?? 0,
+    maxDiscountAmount: coupon.max_discount_amount ?? 0,
+    maxUsesTotal: coupon.max_uses_total ?? 0,
+    maxUsesPerCustomer: coupon.max_uses_per_customer ?? 1,
+    startsAt: toDateInputValue(coupon.starts_at),
+    expiresAt: toDateInputValue(coupon.expires_at),
+  };
+}
+
+export function CreateCouponDialog({
+  open,
+  onOpenChange,
+  editData,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  editData?: any;
+}) {
+  const isEdit = !!editData;
+  const createCoupon = useCreateCoupon();
+  const updateCoupon = useUpdateCoupon();
+  const isPending = isEdit ? updateCoupon.isPending : createCoupon.isPending;
+  const { data: menuItemsData } = useMenuItems();
+  const { data: categoriesData } = useCategories();
+  const menuItems: any[] = menuItemsData ?? [];
+  const categories: any[] = categoriesData ?? [];
+  const [form, setForm] = useState<FormState>(() =>
+    editData ? couponToForm(editData) : emptyForm(),
+  );
+  const [fixedDiscountInput, setFixedDiscountInput] = useState(() =>
+    editData && editData.type === "fixed"
+      ? formatCentsToSoles(editData.discount_value ?? 0)
+      : formatCentsToSoles(50),
+  );
+
+  // Re-sync form whenever the dialog is opened (so prefill stays correct when
+  // switching between create and edit, or editing a different coupon).
+  useEffect(() => {
+    if (!open) return;
+    if (editData) {
+      setForm(couponToForm(editData));
+      setFixedDiscountInput(
+        editData.type === "fixed"
+          ? formatCentsToSoles(editData.discount_value ?? 0)
+          : formatCentsToSoles(50),
+      );
+    } else {
+      setForm(emptyForm());
+      setFixedDiscountInput(formatCentsToSoles(50));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editData?.id]);
 
   function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+
+    if (isEdit) {
+      // Code and type are immutable on the backend PATCH; only send mutable fields.
+      // description is non-nullable in the update schema, so send a plain string
+      // (empty string clears it; never null).
+      const payload: any = {
+        id: editData.id,
+        name: form.name,
+        description: form.description,
+      };
+
+      if (["percentage", "fixed", "item_discount", "category_discount"].includes(form.type)) {
+        payload.discountValue = form.type === "fixed" ? parseSolesToCents(fixedDiscountInput) : form.discountValue;
+      }
+      if (["item_free", "item_discount"].includes(form.type)) {
+        payload.menuItemId = form.menuItemId || null;
+      }
+      if (form.type === "category_discount") {
+        payload.categoryId = form.categoryId || null;
+      }
+      if (form.type === "buy_x_get_y") {
+        payload.buyQuantity = form.buyQuantity;
+        payload.getQuantity = form.getQuantity;
+      }
+      payload.minOrderAmount = form.minOrderAmount > 0 ? form.minOrderAmount : null;
+      payload.maxDiscountAmount = form.maxDiscountAmount > 0 ? form.maxDiscountAmount : null;
+      payload.maxUsesTotal = form.maxUsesTotal > 0 ? form.maxUsesTotal : null;
+      payload.maxUsesPerCustomer = form.maxUsesPerCustomer > 0 ? form.maxUsesPerCustomer : null;
+      payload.startsAt = form.startsAt || null;
+      payload.expiresAt = form.expiresAt || null;
+
+      updateCoupon.mutate(payload, {
+        onSuccess: () => {
+          onOpenChange(false);
+          toast.success("Cupon actualizado exitosamente");
+        },
+        onError: (err) => toast.error(`Error: ${(err as Error).message}`),
+      });
+      return;
+    }
+
     const payload: any = {
       code: form.code,
       name: form.name,
@@ -109,23 +239,7 @@ export function CreateCouponDialog({
 
     createCoupon.mutate(payload, {
       onSuccess: () => {
-        setForm({
-          code: generateCouponCode(),
-          name: "",
-          description: "",
-          type: "percentage",
-          discountValue: 10,
-          menuItemId: "",
-          categoryId: "",
-          buyQuantity: 2,
-          getQuantity: 1,
-          minOrderAmount: 0,
-          maxDiscountAmount: 0,
-          maxUsesTotal: 0,
-          maxUsesPerCustomer: 1,
-          startsAt: "",
-          expiresAt: "",
-        });
+        setForm(emptyForm());
         setFixedDiscountInput(formatCentsToSoles(50));
         onOpenChange(false);
         toast.success("Cupon creado exitosamente");
@@ -138,18 +252,25 @@ export function CreateCouponDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Crear Cupon</DialogTitle>
+          <DialogTitle>{isEdit ? "Editar Cupon" : "Crear Cupon"}</DialogTitle>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
           {/* Code */}
           <div className="space-y-2">
             <Label htmlFor="cpn-code">Codigo del cupon</Label>
-            <div className="flex gap-2">
-              <Input id="cpn-code" value={form.code} onChange={(e) => setForm((p) => ({ ...p, code: e.target.value.toUpperCase() }))} required />
-              <Button type="button" variant="outline" size="icon" onClick={() => setForm((p) => ({ ...p, code: generateCouponCode() }))}>
-                <RefreshCw className="h-4 w-4" />
-              </Button>
-            </div>
+            {isEdit ? (
+              <Input id="cpn-code" value={form.code} disabled readOnly />
+            ) : (
+              <div className="flex gap-2">
+                <Input id="cpn-code" value={form.code} onChange={(e) => setForm((p) => ({ ...p, code: e.target.value.toUpperCase() }))} required />
+                <Button type="button" variant="outline" size="icon" onClick={() => setForm((p) => ({ ...p, code: generateCouponCode() }))}>
+                  <RefreshCw className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+            {isEdit && (
+              <p className="text-xs text-muted-foreground">El codigo no se puede modificar.</p>
+            )}
           </div>
 
           {/* Name */}
@@ -167,36 +288,43 @@ export function CreateCouponDialog({
           {/* Type */}
           <div className="space-y-2">
             <Label htmlFor="cpn-type">Tipo de cupon</Label>
-            <Select
-              value={form.type}
-              onValueChange={(v) => {
-                if (v === "fixed") {
-                  setFixedDiscountInput(formatCentsToSoles(50));
-                }
+            {isEdit ? (
+              <>
+                <Input id="cpn-type" value={couponTypeLabels[form.type] ?? form.type} disabled readOnly />
+                <p className="text-xs text-muted-foreground">El tipo no se puede modificar.</p>
+              </>
+            ) : (
+              <Select
+                value={form.type}
+                onValueChange={(v) => {
+                  if (v === "fixed") {
+                    setFixedDiscountInput(formatCentsToSoles(50));
+                  }
 
-                setForm((p) => ({
-                  ...p,
-                  type: v,
-                  discountValue: v === "fixed" ? 50 : (v === "percentage" || v === "item_discount" || v === "category_discount") ? 10 : 0,
-                  menuItemId: "",
-                  categoryId: "",
-                  buyQuantity: 2,
-                  getQuantity: 1,
-                }));
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Tipo de cupon" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="percentage">Porcentaje de descuento (%)</SelectItem>
-                <SelectItem value="fixed">Monto fijo de descuento</SelectItem>
-                <SelectItem value="item_free">Item gratis</SelectItem>
-                <SelectItem value="item_discount">Descuento en item especifico</SelectItem>
-                <SelectItem value="category_discount">Descuento en categoria</SelectItem>
-                <SelectItem value="buy_x_get_y">Compra X lleva Y</SelectItem>
-              </SelectContent>
-            </Select>
+                  setForm((p) => ({
+                    ...p,
+                    type: v,
+                    discountValue: v === "fixed" ? 50 : (v === "percentage" || v === "item_discount" || v === "category_discount") ? 10 : 0,
+                    menuItemId: "",
+                    categoryId: "",
+                    buyQuantity: 2,
+                    getQuantity: 1,
+                  }));
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Tipo de cupon" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="percentage">Porcentaje de descuento (%)</SelectItem>
+                  <SelectItem value="fixed">Monto fijo de descuento</SelectItem>
+                  <SelectItem value="item_free">Item gratis</SelectItem>
+                  <SelectItem value="item_discount">Descuento en item especifico</SelectItem>
+                  <SelectItem value="category_discount">Descuento en categoria</SelectItem>
+                  <SelectItem value="buy_x_get_y">Compra X lleva Y</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
           </div>
 
           {/* Type-specific fields */}
@@ -345,14 +473,16 @@ export function CreateCouponDialog({
             <Button
               type="submit"
               disabled={
-                createCoupon.isPending ||
+                isPending ||
                 !form.name ||
                 !form.code ||
                 (["item_free", "item_discount"].includes(form.type) && !form.menuItemId) ||
                 (form.type === "category_discount" && !form.categoryId)
               }
             >
-              {createCoupon.isPending ? "Creando..." : "Crear Cupon"}
+              {isEdit
+                ? (isPending ? "Guardando..." : "Guardar Cambios")
+                : (isPending ? "Creando..." : "Crear Cupon")}
             </Button>
           </DialogFooter>
         </form>

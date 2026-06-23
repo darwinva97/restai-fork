@@ -31,6 +31,9 @@ import {
   TrendingUp,
   TrendingDown,
   RefreshCw,
+  Pencil,
+  ShieldCheck,
+  ShieldOff,
 } from "lucide-react";
 import {
   useLoyaltyCustomer,
@@ -38,6 +41,7 @@ import {
   useLoyaltyRewards,
   useRedeemReward,
 } from "@/hooks/use-loyalty";
+import { CustomerDialog } from "../_components/customer-dialog";
 import { formatDate } from "@/lib/utils";
 import { toast } from "sonner";
 
@@ -110,10 +114,13 @@ export default function CustomerDetailPage({
 
   const [redeemOpen, setRedeemOpen] = useState(false);
   const [selectedRewardId, setSelectedRewardId] = useState("none");
+  const [editOpen, setEditOpen] = useState(false);
 
   const transactions: any[] = transactionsData ?? [];
   const rewards: any[] = rewardsData ?? [];
   const loyalty = customer?.loyalty;
+  // Redemptions are surfaced from the points history (negative "redeemed" rows).
+  const redemptions: any[] = transactions.filter((tx) => tx.type === "redeemed");
 
   function handleRedeem() {
     if (!selectedRewardId || selectedRewardId === "none" || !loyalty?.id) return;
@@ -208,10 +215,16 @@ export default function CustomerDetailPage({
         {/* Customer Info */}
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <User className="h-5 w-5" />
-              {customer.name}
-            </CardTitle>
+            <div className="flex items-center justify-between gap-2">
+              <CardTitle className="flex items-center gap-2">
+                <User className="h-5 w-5" />
+                {customer.name}
+              </CardTitle>
+              <Button variant="outline" size="sm" onClick={() => setEditOpen(true)}>
+                <Pencil className="h-4 w-4 mr-2" />
+                Editar
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="space-y-3">
             {customer.email && (
@@ -230,6 +243,23 @@ export default function CustomerDetailPage({
               <div className="flex items-center gap-2 text-sm text-foreground">
                 <Calendar className="h-4 w-4 text-muted-foreground" />
                 {customer.birth_date}
+              </div>
+            )}
+            {/* Marketing consent state */}
+            {customer.marketing_opt_in ? (
+              <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400">
+                <ShieldCheck className="h-4 w-4" />
+                Acepta marketing
+                {customer.consent_at && (
+                  <span className="text-xs text-muted-foreground">
+                    (desde {formatDate(customer.consent_at)})
+                  </span>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <ShieldOff className="h-4 w-4" />
+                No acepta marketing
               </div>
             )}
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -338,12 +368,75 @@ export default function CustomerDetailPage({
         </Card>
       )}
 
+      {/* Redemptions Section (applied + pending derived from points history) */}
+      {loyalty && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Gift className="h-5 w-5" />
+              Canjes de Recompensas
+            </CardTitle>
+            <CardDescription>
+              Recompensas que este cliente ha canjeado con sus puntos.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border bg-muted/50">
+                    <th className="text-left p-3 text-sm font-medium text-muted-foreground">
+                      Fecha
+                    </th>
+                    <th className="text-left p-3 text-sm font-medium text-muted-foreground">
+                      Recompensa
+                    </th>
+                    <th className="text-right p-3 text-sm font-medium text-muted-foreground">
+                      Puntos usados
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {redemptions.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={3}
+                        className="p-8 text-center text-sm text-muted-foreground"
+                      >
+                        Este cliente aun no ha canjeado recompensas
+                      </td>
+                    </tr>
+                  ) : (
+                    redemptions.map((rx: any) => (
+                      <tr
+                        key={rx.id}
+                        className="border-b border-border last:border-0 hover:bg-muted/50 transition-colors"
+                      >
+                        <td className="p-3 text-sm text-foreground">
+                          {formatDate(rx.created_at)}
+                        </td>
+                        <td className="p-3 text-sm text-foreground">
+                          {rx.description || "Recompensa canjeada"}
+                        </td>
+                        <td className="p-3 text-sm font-medium text-right text-red-600 dark:text-red-400">
+                          {Math.abs(rx.points || 0).toLocaleString()} pts
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Transaction History */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Trophy className="h-5 w-5" />
-            Historial de Transacciones
+            Historial de Puntos
           </CardTitle>
         </CardHeader>
         <CardContent className="p-0">
@@ -420,6 +513,13 @@ export default function CustomerDetailPage({
           </div>
         </CardContent>
       </Card>
+
+      {/* Edit Customer Dialog */}
+      <CustomerDialog
+        open={editOpen}
+        onOpenChange={setEditOpen}
+        editData={customer}
+      />
 
       {/* Redeem Dialog */}
       <Dialog open={redeemOpen} onOpenChange={setRedeemOpen}>

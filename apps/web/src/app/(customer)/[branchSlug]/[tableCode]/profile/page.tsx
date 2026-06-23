@@ -25,6 +25,7 @@ import {
   ShoppingBag,
   Ticket,
   User,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -73,6 +74,27 @@ interface OrderData {
   items: Array<{ id: string; name: string; quantity: number; status: string }>;
 }
 
+// Loyalty points history row. Tolerant of snake_case/camelCase shapes from the
+// my-transactions endpoint; `points` is signed (negative for redeemed/expired).
+interface TransactionData {
+  id: string;
+  points: number;
+  type: string;
+  description?: string | null;
+  created_at?: string | null;
+  createdAt?: string | null;
+  expires_at?: string | null;
+  expiresAt?: string | null;
+  expired?: boolean;
+}
+
+const txTypeLabels: Record<string, string> = {
+  earned: "Ganados",
+  redeemed: "Canjeados",
+  adjusted: "Ajuste",
+  expired: "Expirados",
+};
+
 const orderStatusLabels: Record<string, string> = {
   pending: "Pendiente",
   confirmed: "Confirmado",
@@ -108,6 +130,7 @@ export default function ProfilePage({
   const [redemptions, setRedemptions] = useState<RedemptionData[]>([]);
   const [coupons, setCoupons] = useState<CouponData[]>([]);
   const [orders, setOrders] = useState<OrderData[]>([]);
+  const [transactions, setTransactions] = useState<TransactionData[]>([]);
 
   // Redeem dialog
   const [redeemDialogOpen, setRedeemDialogOpen] = useState(false);
@@ -134,24 +157,27 @@ export default function ProfilePage({
     const headers = { Authorization: `Bearer ${token}` };
 
     try {
-      const [loyaltyRes, couponsRes, ordersRes, redemptionsRes] = await Promise.all([
+      const [loyaltyRes, couponsRes, ordersRes, redemptionsRes, transactionsRes] = await Promise.all([
         fetch(`${API_URL}/api/customer/my-loyalty`, { headers }),
         fetch(`${API_URL}/api/customer/my-coupons`, { headers }),
         fetch(`${API_URL}/api/customer/my-orders`, { headers }),
         fetch(`${API_URL}/api/customer/my-redemptions`, { headers }),
+        fetch(`${API_URL}/api/customer/my-transactions`, { headers }),
       ]);
 
-      const [loyaltyData, couponsData, ordersData, redemptionsData] = await Promise.all([
+      const [loyaltyData, couponsData, ordersData, redemptionsData, transactionsData] = await Promise.all([
         loyaltyRes.json(),
         couponsRes.json(),
         ordersRes.json(),
         redemptionsRes.json(),
+        transactionsRes.json().catch(() => ({ success: false })),
       ]);
 
       if (loyaltyData.success && loyaltyData.data) setLoyalty(loyaltyData.data);
       if (couponsData.success) setCoupons(couponsData.data || []);
       if (ordersData.success) setOrders(ordersData.data || []);
       if (redemptionsData.success) setRedemptions(redemptionsData.data || []);
+      if (transactionsData.success) setTransactions(transactionsData.data || []);
     } catch {
       // Silently fail — partial data is fine
     } finally {
@@ -193,18 +219,21 @@ export default function ProfilePage({
       setRedeemDialogOpen(false);
       setSuccessDialogOpen(true);
 
-      // Re-fetch loyalty + redemptions
+      // Re-fetch loyalty + redemptions + points history
       const headers = { Authorization: `Bearer ${token}` };
-      const [loyaltyRes, redemptionsRes] = await Promise.all([
+      const [loyaltyRes, redemptionsRes, transactionsRes] = await Promise.all([
         fetch(`${API_URL}/api/customer/my-loyalty`, { headers }),
         fetch(`${API_URL}/api/customer/my-redemptions`, { headers }),
+        fetch(`${API_URL}/api/customer/my-transactions`, { headers }),
       ]);
-      const [loyaltyData, redemptionsData] = await Promise.all([
+      const [loyaltyData, redemptionsData, transactionsData] = await Promise.all([
         loyaltyRes.json(),
         redemptionsRes.json(),
+        transactionsRes.json().catch(() => ({ success: false })),
       ]);
       if (loyaltyData.success && loyaltyData.data) setLoyalty(loyaltyData.data);
       if (redemptionsData.success) setRedemptions(redemptionsData.data || []);
+      if (transactionsData.success) setTransactions(transactionsData.data || []);
     } catch {
       // Error handled silently
     } finally {
@@ -293,6 +322,65 @@ export default function ProfilePage({
               <TrendingUp className="h-3 w-3" />
               <span>Ganas puntos con cada pedido</span>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Points history */}
+      {transactions.length > 0 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <History className="h-4 w-4 text-primary" />
+              Historial de puntos
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {transactions.map((tx) => {
+              const created = tx.created_at ?? tx.createdAt ?? null;
+              const expires = tx.expires_at ?? tx.expiresAt ?? null;
+              const positive = tx.points >= 0;
+              const showExpiry = !tx.expired && tx.type === "earned" && !!expires;
+              return (
+                <div
+                  key={tx.id}
+                  className="flex items-center justify-between gap-3 p-3 rounded-lg border border-border bg-muted/30"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <Badge variant="outline" className="text-[10px] shrink-0">
+                        {txTypeLabels[tx.type] || tx.type}
+                      </Badge>
+                      {tx.description && (
+                        <p className="text-xs text-muted-foreground truncate">{tx.description}</p>
+                      )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1">
+                      {created && new Date(created).toLocaleDateString("es-PE", {
+                        day: "2-digit",
+                        month: "short",
+                        year: "numeric",
+                      })}
+                      {showExpiry && (
+                        <> · Vence {new Date(expires!).toLocaleDateString("es-PE")}</>
+                      )}
+                      {tx.expired && <> · Expirado</>}
+                    </p>
+                  </div>
+                  <span
+                    className={cn(
+                      "text-sm font-bold shrink-0 tabular-nums",
+                      positive
+                        ? "text-green-600 dark:text-green-400"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {positive ? "+" : "-"}
+                    {Math.abs(tx.points).toLocaleString()} pts
+                  </span>
+                </div>
+              );
+            })}
           </CardContent>
         </Card>
       )}
@@ -475,7 +563,7 @@ export default function ProfilePage({
       )}
 
       {/* No loyalty message */}
-      {!loyalty && orders.length === 0 && coupons.length === 0 && (
+      {!loyalty && orders.length === 0 && coupons.length === 0 && transactions.length === 0 && (
         <Card>
           <CardContent className="p-6 text-center">
             <Star className="h-10 w-10 text-muted-foreground/30 mx-auto mb-3" />

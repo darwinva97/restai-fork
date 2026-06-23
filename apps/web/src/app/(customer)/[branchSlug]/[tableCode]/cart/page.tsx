@@ -29,7 +29,7 @@ function useCartPageLocalState() {
   const [couponCode, setCouponCode] = useState("");
   const [couponLoading, setCouponLoading] = useState(false);
   const [couponError, setCouponError] = useState<string | null>(null);
-  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; name: string; type: string; discount_value: number; menu_item_id?: string | null } | null>(null);
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; name: string; type: string; discount_value: number; menu_item_id?: string | null; min_order_amount?: number | null; max_discount_amount?: number | null } | null>(null);
   const [availableCoupons, setAvailableCoupons] = useState<any[]>([]);
   const [pendingRedemptions, setPendingRedemptions] = useState<Array<{ id: string; reward_name: string; discount_type: string; discount_value: number }>>([]);
   const [appliedRedemption, setAppliedRedemption] = useState<{ id: string; reward_name: string; discount_type: string; discount_value: number } | null>(null);
@@ -377,6 +377,8 @@ export default function CartPage({
           type: data.data.type,
           discount_value: data.data.discount_value || 0,
           menu_item_id: data.data.menu_item_id || null,
+          min_order_amount: data.data.min_order_amount ?? null,
+          max_discount_amount: data.data.max_discount_amount ?? null,
         });
         setCouponCode("");
         setCouponLoading(false);
@@ -387,8 +389,37 @@ export default function CartPage({
       });
   };
 
-  function getCouponDiscount(): number {
-    if (!appliedCoupon) return 0;
+  // Effective per-unit price of a cart line INCLUDING its modifiers. Mirrors the
+  // server's effectiveUnitPrice (line total / quantity) so free-item and
+  // buy-x-get-y estimates match the confirmed total.
+  const effectiveUnitPrice = (item: (typeof items)[number]): number => {
+    const modifiersTotal = item.modifiers.reduce((ms, m) => ms + m.price, 0);
+    return item.unitPrice + modifiersTotal;
+  };
+  // Effective line total (modifier-inclusive, × quantity). Matches server `total`.
+  const effectiveLineTotal = (item: (typeof items)[number]): number =>
+    effectiveUnitPrice(item) * item.quantity;
+
+  // Honest coupon preview. Returns the estimated discount AND, when the coupon
+  // cannot apply yet (min order not met), a human hint instead of pretending it
+  // is applied. All math mirrors apps/api/src/services/order.service.ts so the
+  // previewed total matches the server's confirmed total. Still an ESTIMATE —
+  // the server recomputes and is authoritative.
+  function computeCouponDiscount(): { discount: number; blockedReason: string | null } {
+    if (!appliedCoupon) return { discount: 0, blockedReason: null };
+
+    // Min order amount gate (server rejects the coupon below this threshold).
+    if (
+      appliedCoupon.min_order_amount != null &&
+      subtotal < appliedCoupon.min_order_amount
+    ) {
+      const faltan = appliedCoupon.min_order_amount - subtotal;
+      return {
+        discount: 0,
+        blockedReason: `Pedido minimo ${formatCurrency(appliedCoupon.min_order_amount)} · faltan ${formatCurrency(faltan)}`,
+      };
+    }
+
     let discount = 0;
     switch (appliedCoupon.type) {
       case "percentage":
@@ -398,19 +429,24 @@ export default function CartPage({
         discount = Math.min(appliedCoupon.discount_value, subtotal);
         break;
       case "item_free": {
+        // 1 unit free at the modifier-inclusive effective unit price.
         if (appliedCoupon.menu_item_id) {
           const match = items.find((i) => i.menuItemId === appliedCoupon.menu_item_id);
-          if (match) discount = match.unitPrice;
+          if (match) discount = effectiveUnitPrice(match);
         } else if (items.length > 0) {
-          const cheapest = items.reduce((min, i) => (i.unitPrice < min.unitPrice ? i : min), items[0]);
-          discount = cheapest.unitPrice;
+          const cheapest = items.reduce(
+            (min, i) => (effectiveUnitPrice(i) < effectiveUnitPrice(min) ? i : min),
+            items[0],
+          );
+          discount = effectiveUnitPrice(cheapest);
         }
         break;
       }
       case "item_discount": {
+        // Percentage off a specific item's modifier-inclusive line total.
         if (appliedCoupon.menu_item_id) {
           const match = items.find((i) => i.menuItemId === appliedCoupon.menu_item_id);
-          if (match) discount = Math.round(match.unitPrice * match.quantity * (appliedCoupon.discount_value / 100));
+          if (match) discount = Math.round(effectiveLineTotal(match) * (appliedCoupon.discount_value / 100));
         }
         break;
       }
@@ -422,10 +458,15 @@ export default function CartPage({
       default:
         discount = 0;
     }
-    return Math.min(discount, subtotal);
+
+    // Apply max discount cap, then clamp to subtotal (matches server order).
+    if (appliedCoupon.max_discount_amount != null && discount > appliedCoupon.max_discount_amount) {
+      discount = appliedCoupon.max_discount_amount;
+    }
+    return { discount: Math.min(discount, subtotal), blockedReason: null };
   }
 
-  const couponDiscount = getCouponDiscount();
+  const { discount: couponDiscount, blockedReason: couponBlockedReason } = computeCouponDiscount();
 
   function getRedemptionDiscount(): number {
     if (!appliedRedemption) return 0;
@@ -464,7 +505,10 @@ export default function CartPage({
             modifierId: m.modifierId,
           })),
         })),
-        ...(appliedCoupon ? { couponCode: appliedCoupon.code } : {}),
+        // Only send the coupon when it actually qualifies (min order met). If it
+        // is blocked, omit it so the order is not rejected wholesale by the
+        // server — the user already sees the hint that it is not applied.
+        ...(appliedCoupon && !couponBlockedReason ? { couponCode: appliedCoupon.code } : {}),
         ...(appliedRedemption ? { redemptionId: appliedRedemption.id } : {}),
       }),
     })
@@ -606,9 +650,14 @@ export default function CartPage({
           >
             <Ticket className="h-4 w-4 text-primary" />
             Tengo un cupon
-            {appliedCoupon && (
+            {appliedCoupon && !couponBlockedReason && (
               <span className="text-[10px] font-medium text-green-600 dark:text-green-400 bg-green-500/10 px-1.5 py-0.5 rounded">
                 Aplicado
+              </span>
+            )}
+            {appliedCoupon && couponBlockedReason && (
+              <span className="text-[10px] font-medium text-amber-600 dark:text-amber-400 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                No aplicable aun
               </span>
             )}
             <ChevronDown
@@ -637,6 +686,8 @@ export default function CartPage({
                           type: coupon.type,
                           discount_value: coupon.discount_value || 0,
                           menu_item_id: coupon.menu_item_id || null,
+                          min_order_amount: coupon.min_order_amount ?? null,
+                          max_discount_amount: coupon.max_discount_amount ?? null,
                         });
                       }}
                       className="w-full flex items-center justify-between rounded-lg border border-primary/20 bg-primary/5 p-3 hover:bg-primary/10 transition-colors text-left"
@@ -658,13 +709,31 @@ export default function CartPage({
                   ))}
                 </div>
               )}
-              {appliedCoupon ? (
+              {appliedCoupon && couponBlockedReason ? (
+                <div className="flex items-center justify-between rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 p-3">
+                  <div className="flex items-center gap-2">
+                    <Ticket className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                    <div>
+                      <p className="text-sm font-medium text-amber-800 dark:text-amber-300">{appliedCoupon.code}</p>
+                      <p className="text-xs text-amber-600 dark:text-amber-400">{couponBlockedReason}</p>
+                    </div>
+                  </div>
+                  <button onClick={() => setAppliedCoupon(null)} className="p-1">
+                    <X className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                  </button>
+                </div>
+              ) : appliedCoupon ? (
                 <div className="flex items-center justify-between rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 p-3">
                   <div className="flex items-center gap-2">
                     <Check className="h-4 w-4 text-green-600 dark:text-green-400" />
                     <div>
                       <p className="text-sm font-medium text-green-800 dark:text-green-300">{appliedCoupon.code}</p>
-                      <p className="text-xs text-green-600 dark:text-green-400">{appliedCoupon.name} - {formatCurrency(couponDiscount)} descuento</p>
+                      <p className="text-xs text-green-600 dark:text-green-400">
+                        {appliedCoupon.name}
+                        {appliedCoupon.type === "buy_x_get_y"
+                          ? " - Promo aplicada en caja"
+                          : ` - ${formatCurrency(couponDiscount)} descuento`}
+                      </p>
                     </div>
                   </div>
                   <button onClick={() => setAppliedCoupon(null)} className="p-1">
@@ -770,6 +839,12 @@ export default function CartPage({
               <span className="font-medium text-green-600 dark:text-green-400">-{formatCurrency(couponDiscount)}</span>
             </div>
           )}
+          {appliedCoupon && !couponBlockedReason && appliedCoupon.type === "buy_x_get_y" && (
+            <div className="flex justify-between text-sm">
+              <span className="text-green-600 dark:text-green-400">Cupon ({appliedCoupon.code})</span>
+              <span className="font-medium text-green-600 dark:text-green-400">Promo en caja</span>
+            </div>
+          )}
           {redemptionDiscount > 0 && (
             <div className="flex justify-between text-sm">
               <span className="text-green-600 dark:text-green-400">Recompensa</span>
@@ -785,6 +860,9 @@ export default function CartPage({
               <span>Total</span>
               <span className="text-primary">{formatCurrency(adjustedTotal)}</span>
             </div>
+            <p className="text-[10px] text-muted-foreground mt-1">
+              Total estimado. El monto final se confirma al registrar el pedido.
+            </p>
           </div>
         </CardContent>
       </Card>

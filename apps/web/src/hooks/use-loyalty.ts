@@ -50,6 +50,13 @@ export function useLoyaltyRewards() {
   });
 }
 
+export function useLoyaltyAnalytics() {
+  return useQuery({
+    queryKey: ["loyalty", "analytics"],
+    queryFn: () => apiFetch("/api/loyalty/analytics"),
+  });
+}
+
 export function useCreateCustomer() {
   const qc = useQueryClient();
   return useMutation({
@@ -61,11 +68,47 @@ export function useCreateCustomer() {
   });
 }
 
+export function useUpdateCustomer() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, ...data }: any) =>
+      apiFetch(`/api/loyalty/customers/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify(data),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["loyalty"] }),
+  });
+}
+
 export function useDeleteCustomer() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) =>
       apiFetch(`/api/loyalty/customers/${id}`, { method: "DELETE" }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["loyalty"] }),
+  });
+}
+
+export function useAdjustPoints() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, amount, reason }: { id: string; amount: number; reason: string }) =>
+      apiFetch(`/api/loyalty/customers/${id}/adjust-points`, {
+        method: "POST",
+        body: JSON.stringify({ amount, reason }),
+      }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["loyalty"] }),
+  });
+}
+
+export function useMergeCustomers() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, sourceCustomerId }: { id: string; sourceCustomerId: string }) =>
+      apiFetch(`/api/loyalty/customers/${id}/merge`, {
+        method: "POST",
+        body: JSON.stringify({ sourceCustomerId }),
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["loyalty"] }),
   });
 }

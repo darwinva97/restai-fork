@@ -19,10 +19,13 @@ import {
   Award,
   Pencil,
   Trash2,
+  Power,
+  Clock,
 } from "lucide-react";
 import {
   useLoyaltyStats,
   useLoyaltyPrograms,
+  useUpdateProgram,
   useDeleteProgram,
   useDeleteTier,
 } from "@/hooks/use-loyalty";
@@ -123,6 +126,7 @@ function OnboardingGuide({ onCreateProgram }: { onCreateProgram: () => void }) {
 export function ProgramsTab() {
   const { data, isLoading } = useLoyaltyPrograms();
   const { data: stats } = useLoyaltyStats();
+  const updateProgram = useUpdateProgram();
   const deleteProgram = useDeleteProgram();
   const deleteTier = useDeleteTier();
 
@@ -161,6 +165,17 @@ export function ProgramsTab() {
     }
   }
 
+  function handleToggleActive(program: any) {
+    const next = !program.is_active;
+    updateProgram.mutate(
+      { id: program.id, isActive: next },
+      {
+        onSuccess: () => toast.success(next ? "Programa activado" : "Programa desactivado"),
+        onError: (err) => toast.error(`Error: ${(err as Error).message}`),
+      },
+    );
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex justify-end">
@@ -181,12 +196,30 @@ export function ProgramsTab() {
               <div className="flex items-center justify-between">
                 <div>
                   <CardTitle>{program.name}</CardTitle>
-                  <CardDescription>{program.is_active ? "Programa activo" : "Programa inactivo"}</CardDescription>
+                  <CardDescription className="flex items-center gap-1.5">
+                    <span>{program.is_active ? "Programa activo" : "Programa inactivo"}</span>
+                    <span aria-hidden>&middot;</span>
+                    <span className="inline-flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {program.points_expire_after_days != null
+                        ? `Puntos expiran a los ${program.points_expire_after_days} dias`
+                        : "Puntos sin expiracion"}
+                    </span>
+                  </CardDescription>
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge variant={program.is_active ? "default" : "secondary"}>
                     {program.is_active ? "Activo" : "Inactivo"}
                   </Badge>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleToggleActive(program)}
+                    disabled={updateProgram.isPending}
+                  >
+                    <Power className="h-3.5 w-3.5 mr-1" />
+                    {program.is_active ? "Desactivar" : "Activar"}
+                  </Button>
                   <Button variant="ghost" size="icon" onClick={() => setEditProgram(program)}>
                     <Pencil className="h-4 w-4" />
                   </Button>

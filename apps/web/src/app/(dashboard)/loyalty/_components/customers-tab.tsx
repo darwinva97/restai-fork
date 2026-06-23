@@ -7,11 +7,37 @@ import {
   CardContent,
 } from "@restai/ui/components/card";
 import { Button } from "@restai/ui/components/button";
-import { Plus, RefreshCw, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
-import { useLoyaltyCustomers, useDeleteCustomer } from "@/hooks/use-loyalty";
+import { Input } from "@restai/ui/components/input";
+import { Label } from "@restai/ui/components/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from "@restai/ui/components/dialog";
+import {
+  Plus,
+  RefreshCw,
+  Trash2,
+  Pencil,
+  Sparkles,
+  Users as UsersIcon,
+  ChevronLeft,
+  ChevronRight,
+  ArrowUp,
+  ArrowDown,
+} from "lucide-react";
+import {
+  useLoyaltyCustomers,
+  useDeleteCustomer,
+  useAdjustPoints,
+  useMergeCustomers,
+} from "@/hooks/use-loyalty";
 import { SearchInput } from "@/components/search-input";
 import { ConfirmDialog } from "@/components/confirm-dialog";
-import { CreateCustomerDialog } from "./customer-dialog";
+import { CustomerDialog } from "./customer-dialog";
+import { toast } from "sonner";
 
 const tierConfig: Record<string, { label: string; color: string }> = {
   Bronce: {
@@ -36,11 +62,253 @@ function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-muted rounded ${className ?? ""}`} />;
 }
 
+// ---------------------------------------------------------------------------
+// Adjust points dialog
+// ---------------------------------------------------------------------------
+function AdjustPointsDialog({
+  customer,
+  onOpenChange,
+}: {
+  customer: { id: string; name: string; points_balance?: number } | null;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const adjustPoints = useAdjustPoints();
+  const [direction, setDirection] = useState<"add" | "subtract">("add");
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+
+  function reset() {
+    setDirection("add");
+    setAmount("");
+    setReason("");
+  }
+
+  function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!customer) return;
+    const raw = parseInt(amount, 10);
+    if (!Number.isFinite(raw) || raw <= 0) {
+      toast.error("Ingresa una cantidad valida mayor a 0");
+      return;
+    }
+    if (!reason.trim()) {
+      toast.error("Ingresa un motivo");
+      return;
+    }
+    const signed = direction === "add" ? raw : -raw;
+    adjustPoints.mutate(
+      { id: customer.id, amount: signed, reason: reason.trim() },
+      {
+        onSuccess: () => {
+          reset();
+          onOpenChange(false);
+          toast.success("Puntos ajustados");
+        },
+        onError: (err) => toast.error(`Error: ${(err as Error).message}`),
+      },
+    );
+  }
+
+  return (
+    <Dialog open={!!customer} onOpenChange={(v) => { if (!v) { reset(); onOpenChange(false); } }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Ajustar puntos</DialogTitle>
+        </DialogHeader>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Cliente: <span className="font-medium text-foreground">{customer?.name}</span>
+            {typeof customer?.points_balance === "number" && (
+              <>
+                {" "}- saldo actual{" "}
+                <span className="font-medium text-foreground">
+                  {customer.points_balance.toLocaleString()} pts
+                </span>
+              </>
+            )}
+          </p>
+
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              type="button"
+              variant={direction === "add" ? "default" : "outline"}
+              onClick={() => setDirection("add")}
+            >
+              <ArrowUp className="h-4 w-4 mr-2" />Agregar
+            </Button>
+            <Button
+              type="button"
+              variant={direction === "subtract" ? "default" : "outline"}
+              onClick={() => setDirection("subtract")}
+            >
+              <ArrowDown className="h-4 w-4 mr-2" />Restar
+            </Button>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="adjust-amount">Cantidad de puntos</Label>
+            <Input
+              id="adjust-amount"
+              type="number"
+              min={1}
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              placeholder="0"
+              required
+            />
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="adjust-reason">Motivo *</Label>
+            <Input
+              id="adjust-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Ej: correccion manual, cortesia, etc."
+              required
+            />
+          </div>
+
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => { reset(); onOpenChange(false); }}>
+              Cancelar
+            </Button>
+            <Button type="submit" disabled={adjustPoints.isPending}>
+              {adjustPoints.isPending ? "Guardando..." : "Aplicar ajuste"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Merge dialog
+// ---------------------------------------------------------------------------
+function MergeDialog({
+  target,
+  candidates,
+  onOpenChange,
+}: {
+  target: { id: string; name: string } | null;
+  candidates: any[];
+  onOpenChange: (open: boolean) => void;
+}) {
+  const mergeCustomers = useMergeCustomers();
+  const [sourceSearch, setSourceSearch] = useState("");
+  const [sourceId, setSourceId] = useState<string | null>(null);
+
+  function reset() {
+    setSourceSearch("");
+    setSourceId(null);
+  }
+
+  const filtered = candidates
+    .filter((c) => c.id !== target?.id)
+    .filter((c) => {
+      if (!sourceSearch) return true;
+      const q = sourceSearch.toLowerCase();
+      return (
+        (c.name || "").toLowerCase().includes(q) ||
+        (c.email || "").toLowerCase().includes(q) ||
+        (c.phone || "").toLowerCase().includes(q)
+      );
+    });
+
+  function handleMerge() {
+    if (!target || !sourceId) return;
+    mergeCustomers.mutate(
+      { id: target.id, sourceCustomerId: sourceId },
+      {
+        onSuccess: () => {
+          reset();
+          onOpenChange(false);
+          toast.success("Clientes fusionados");
+        },
+        onError: (err) => toast.error(`Error: ${(err as Error).message}`),
+      },
+    );
+  }
+
+  return (
+    <Dialog open={!!target} onOpenChange={(v) => { if (!v) { reset(); onOpenChange(false); } }}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Fusionar clientes</DialogTitle>
+        </DialogHeader>
+        <div className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            Se conservara <span className="font-medium text-foreground">{target?.name}</span> y
+            se absorbera el cliente duplicado que elijas (sus puntos, transacciones y pedidos se
+            transferiran). El duplicado sera eliminado. Esta accion no se puede deshacer.
+          </p>
+
+          <div className="space-y-2">
+            <Label>Cliente duplicado a fusionar</Label>
+            <SearchInput
+              value={sourceSearch}
+              onChange={setSourceSearch}
+              placeholder="Buscar duplicado..."
+            />
+            <div className="max-h-56 overflow-y-auto rounded-lg border border-border divide-y divide-border">
+              {filtered.length === 0 ? (
+                <p className="p-3 text-sm text-muted-foreground text-center">
+                  No hay otros clientes en esta pagina. Usa el buscador.
+                </p>
+              ) : (
+                filtered.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setSourceId(c.id)}
+                    className={`flex w-full items-center justify-between gap-2 p-3 text-left text-sm transition-colors hover:bg-muted/50 ${
+                      sourceId === c.id ? "bg-primary/10" : ""
+                    }`}
+                  >
+                    <div className="min-w-0">
+                      <p className="font-medium text-foreground truncate">{c.name}</p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {c.email || c.phone || "Sin contacto"}
+                      </p>
+                    </div>
+                    <span className="text-xs text-muted-foreground shrink-0">
+                      {(c.points_balance || 0).toLocaleString()} pts
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => { reset(); onOpenChange(false); }}>
+            Cancelar
+          </Button>
+          <Button
+            variant="destructive"
+            disabled={!sourceId || mergeCustomers.isPending}
+            onClick={handleMerge}
+          >
+            {mergeCustomers.isPending ? "Fusionando..." : "Fusionar"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Customers tab
+// ---------------------------------------------------------------------------
 export function CustomersTab() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [page, setPage] = useState(1);
   const [showCreate, setShowCreate] = useState(false);
+  const [editCustomer, setEditCustomer] = useState<any | null>(null);
+  const [adjustCustomer, setAdjustCustomer] = useState<any | null>(null);
+  const [mergeTarget, setMergeTarget] = useState<any | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ id: string; name: string } | null>(null);
   const [timer, setTimer] = useState<ReturnType<typeof setTimeout> | null>(null);
 
@@ -92,7 +360,7 @@ export function CustomersTab() {
                   <th className="text-left p-3 text-sm font-medium text-muted-foreground hidden sm:table-cell">Telefono</th>
                   <th className="text-center p-3 text-sm font-medium text-muted-foreground">Tier</th>
                   <th className="text-right p-3 text-sm font-medium text-muted-foreground">Puntos</th>
-                  <th className="w-10 p-3" />
+                  <th className="w-32 p-3" />
                 </tr>
               </thead>
               <tbody>
@@ -130,14 +398,44 @@ export function CustomersTab() {
                         </td>
                         <td className="p-3 text-sm font-medium text-right text-foreground">{(customer.points_balance || 0).toLocaleString()}</td>
                         <td className="p-3">
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                            onClick={() => setDeleteConfirm({ id: customer.id, name: customer.name })}
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
+                          <div className="flex items-center justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              title="Ajustar puntos"
+                              onClick={() => setAdjustCustomer(customer)}
+                            >
+                              <Sparkles className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              title="Fusionar"
+                              onClick={() => setMergeTarget(customer)}
+                            >
+                              <UsersIcon className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+                              title="Editar"
+                              onClick={() => setEditCustomer(customer)}
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+                              title="Eliminar"
+                              onClick={() => setDeleteConfirm({ id: customer.id, name: customer.name })}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -180,7 +478,29 @@ export function CustomersTab() {
         </div>
       )}
 
-      <CreateCustomerDialog open={showCreate} onOpenChange={setShowCreate} />
+      {/* Create */}
+      <CustomerDialog open={showCreate} onOpenChange={setShowCreate} />
+
+      {/* Edit */}
+      <CustomerDialog
+        key={editCustomer?.id ?? "edit"}
+        open={!!editCustomer}
+        onOpenChange={(v) => !v && setEditCustomer(null)}
+        editData={editCustomer ?? undefined}
+      />
+
+      {/* Adjust points */}
+      <AdjustPointsDialog
+        customer={adjustCustomer}
+        onOpenChange={(v) => !v && setAdjustCustomer(null)}
+      />
+
+      {/* Merge */}
+      <MergeDialog
+        target={mergeTarget}
+        candidates={customers}
+        onOpenChange={(v) => !v && setMergeTarget(null)}
+      />
 
       <ConfirmDialog
         open={!!deleteConfirm}

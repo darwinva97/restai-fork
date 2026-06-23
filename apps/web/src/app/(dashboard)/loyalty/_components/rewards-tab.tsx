@@ -7,7 +7,7 @@ import {
 } from "@restai/ui/components/card";
 import { Button } from "@restai/ui/components/button";
 import { Badge } from "@restai/ui/components/badge";
-import { Plus, Gift, Award, Pencil, Trash2 } from "lucide-react";
+import { Plus, Gift, Award, Pencil, Trash2, Package, User, CalendarClock } from "lucide-react";
 import { useLoyaltyRewards, useLoyaltyPrograms, useDeleteReward } from "@/hooks/use-loyalty";
 import { formatCurrency } from "@/lib/utils";
 import { RewardDialog } from "./reward-dialog";
@@ -16,6 +16,29 @@ import { toast } from "sonner";
 
 function Skeleton({ className }: { className?: string }) {
   return <div className={`animate-pulse bg-muted rounded ${className ?? ""}`} />;
+}
+
+function formatDate(value: any): string {
+  if (!value) return "";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  return d.toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+// A reward is "available" now if active, has stock (or unlimited), and within its date window.
+function getAvailability(reward: any): { available: boolean; reason: string } {
+  if (!reward.is_active) return { available: false, reason: "Inactiva" };
+  if (reward.stock_remaining != null && reward.stock_remaining <= 0) {
+    return { available: false, reason: "Agotada" };
+  }
+  const now = Date.now();
+  if (reward.starts_at && new Date(reward.starts_at).getTime() > now) {
+    return { available: false, reason: "Proximamente" };
+  }
+  if (reward.expires_at && new Date(reward.expires_at).getTime() < now) {
+    return { available: false, reason: "Vencida" };
+  }
+  return { available: true, reason: "Disponible" };
 }
 
 export function RewardsTab() {
@@ -95,37 +118,67 @@ export function RewardsTab() {
       )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-        {rewardsList.map((reward: any) => (
-          <Card key={reward.id} className="relative overflow-hidden">
-            <div className="absolute top-0 right-0 bg-primary text-primary-foreground px-3 py-1.5 rounded-bl-lg">
-              <p className="text-sm font-bold">{reward.points_cost.toLocaleString()} pts</p>
-            </div>
-            <CardContent className="p-5 pt-4">
-              <div className="pr-20">
-                <p className="font-semibold text-foreground">{reward.name}</p>
-                {reward.description && <p className="text-xs text-muted-foreground mt-1">{reward.description}</p>}
+        {rewardsList.map((reward: any) => {
+          const isFreeItem = reward.reward_type === "free_item";
+          const availability = getAvailability(reward);
+          const startsLabel = formatDate(reward.starts_at);
+          const expiresLabel = formatDate(reward.expires_at);
+          return (
+            <Card key={reward.id} className="relative overflow-hidden">
+              <div className="absolute top-0 right-0 bg-primary text-primary-foreground px-3 py-1.5 rounded-bl-lg">
+                <p className="text-sm font-bold">{reward.points_cost.toLocaleString()} pts</p>
               </div>
-              <div className="mt-4 flex items-center gap-2">
-                <Badge variant="secondary" className="text-xs">
-                  {reward.discount_type === "percentage" ? `${reward.discount_value}% descuento` : `${formatCurrency(reward.discount_value)} descuento`}
-                </Badge>
-                {reward.is_active ? (
-                  <Badge variant="outline" className="text-xs text-green-600 border-green-300 dark:text-green-400 dark:border-green-700">Activa</Badge>
-                ) : (
-                  <Badge variant="outline" className="text-xs text-red-600 border-red-300 dark:text-red-400 dark:border-red-700">Inactiva</Badge>
-                )}
-              </div>
-              <div className="mt-3 flex gap-2">
-                <Button variant="outline" size="sm" onClick={() => handleEdit(reward)}>
-                  <Pencil className="h-3.5 w-3.5 mr-1" />Editar
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setDeletingRewardId(reward.id)}>
-                  <Trash2 className="h-3.5 w-3.5 mr-1" />Eliminar
-                </Button>
-              </div>
-            </CardContent>
-          </Card>
-        ))}
+              <CardContent className="p-5 pt-4">
+                <div className="pr-20">
+                  <p className="font-semibold text-foreground">{reward.name}</p>
+                  {reward.description && <p className="text-xs text-muted-foreground mt-1">{reward.description}</p>}
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  {isFreeItem ? (
+                    <Badge variant="secondary" className="text-xs">Producto gratis</Badge>
+                  ) : (
+                    <Badge variant="secondary" className="text-xs">
+                      {reward.discount_type === "percentage" ? `${reward.discount_value}% descuento` : `${formatCurrency(reward.discount_value)} descuento`}
+                    </Badge>
+                  )}
+                  {availability.available ? (
+                    <Badge variant="outline" className="text-xs text-green-600 border-green-300 dark:text-green-400 dark:border-green-700">Disponible</Badge>
+                  ) : (
+                    <Badge variant="outline" className="text-xs text-red-600 border-red-300 dark:text-red-400 dark:border-red-700">{availability.reason}</Badge>
+                  )}
+                </div>
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <Badge variant="outline" className="text-xs gap-1 font-normal">
+                    <Package className="h-3 w-3" />
+                    {reward.stock_remaining != null ? `${reward.stock_remaining.toLocaleString()} en stock` : "Stock ilimitado"}
+                  </Badge>
+                  <Badge variant="outline" className="text-xs gap-1 font-normal">
+                    <User className="h-3 w-3" />
+                    {reward.max_per_customer != null ? `Max ${reward.max_per_customer}/cliente` : "Sin limite/cliente"}
+                  </Badge>
+                  {(startsLabel || expiresLabel) && (
+                    <Badge variant="outline" className="text-xs gap-1 font-normal">
+                      <CalendarClock className="h-3 w-3" />
+                      {startsLabel && expiresLabel
+                        ? `${startsLabel} - ${expiresLabel}`
+                        : startsLabel
+                          ? `Desde ${startsLabel}`
+                          : `Hasta ${expiresLabel}`}
+                    </Badge>
+                  )}
+                </div>
+                <div className="mt-3 flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => handleEdit(reward)}>
+                    <Pencil className="h-3.5 w-3.5 mr-1" />Editar
+                  </Button>
+                  <Button variant="outline" size="sm" onClick={() => setDeletingRewardId(reward.id)}>
+                    <Trash2 className="h-3.5 w-3.5 mr-1" />Eliminar
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })}
       </div>
 
       {programId && (
