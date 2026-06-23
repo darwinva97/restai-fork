@@ -6,6 +6,10 @@ dist/
 .next/
 out/
 build/
+.open-next/
+
+# Cloudflare / wrangler
+.wrangler/
 
 # Turborepo
 .turbo/

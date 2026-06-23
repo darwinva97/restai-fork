@@ -48,5 +48,5 @@ deleted_classes = ["RestaiApiContainer"]
 DATABASE_DRIVER = "neon"           # driver serverless de Neon (WebSocket)
 REALTIME_PROVIDER = "ably"         # realtime vía Ably (Pub/Sub); secreto ABLY_API_KEY
 LOG_LEVEL = "info"
-CORS_ORIGINS = "https://app.tu-dominio.com"
+CORS_ORIGINS = "https://app.restai.bezenti.com"
 PUSHER_CLUSTER = ""                # solo si usas pusher

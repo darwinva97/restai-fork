@@ -94,15 +94,16 @@ usa WebCrypto, la DB usa el driver serverless de Neon **por-request**
   (También puedes correr `wrangler deploy` localmente si tienes Docker; requiere el
   plan de Cloudflare con Containers habilitado.)
 
-- **Web → Cloudflare Pages** (o Vercel). Build del `apps/web` (Next.js) con
-  `NEXT_PUBLIC_API_URL` apuntando a la URL del Worker de la API.
+- **Web → Cloudflare Worker** (OpenNext). Build del `apps/web` (Next.js) con
+  `NEXT_PUBLIC_API_URL` apuntando a la URL del Worker de la API. Se publica en
+  `app.restai.bezenti.com` (ver `apps/web/wrangler.jsonc`).
 
 ## Puesta en marcha con CI/CD (lo que necesitas hacer)
 
 Todo el despliegue es por GitHub Actions al hacer push a `main`:
 
-- [`.github/workflows/deploy-api.yml`](../.github/workflows/deploy-api.yml) — migra Neon + despliega la API en Cloudflare Containers + sincroniza secretos.
-- [`.github/workflows/deploy-web.yml`](../.github/workflows/deploy-web.yml) — despliega el web en Vercel.
+- [`.github/workflows/deploy-api.yml`](../.github/workflows/deploy-api.yml) — migra Neon + despliega la API como Cloudflare Worker + sincroniza secretos.
+- [`.github/workflows/deploy-web.yml`](../.github/workflows/deploy-web.yml) — build con OpenNext + despliega el web como Cloudflare Worker.
 
 **Pasos:**
 
@@ -111,16 +112,18 @@ Todo el despliegue es por GitHub Actions al hacer push a `main`:
 
    | Secret | Para qué |
    |--------|----------|
-   | `CLOUDFLARE_API_TOKEN` | API (token "Claude Contabo") |
-   | `CLOUDFLARE_ACCOUNT_ID` | API (`39f3db3a2ce79188fddf0cb83e72f8be`) |
+   | `CLOUDFLARE_API_TOKEN` | API + Web (token "Claude Contabo") |
+   | `CLOUDFLARE_ACCOUNT_ID` | API + Web (`39f3db3a2ce79188fddf0cb83e72f8be`) |
    | `DATABASE_URL` | API: connection string de Neon |
    | `JWT_SECRET`, `JWT_REFRESH_SECRET` | API: auth |
    | `SUNAT_ENCRYPTION_KEY` | API: cifra credenciales/cert SUNAT |
    | `REDIS_URL` | API: Upstash `rediss://…` |
-   | `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID` | Web |
 
-3. **Vercel**: crea el proyecto (Root Directory `apps/web`) y define las env vars
-   `NEXT_PUBLIC_API_URL` y `NEXT_PUBLIC_WS_URL` apuntando a la URL de la API.
+   El web reutiliza `CLOUDFLARE_API_TOKEN`/`CLOUDFLARE_ACCOUNT_ID`; no necesita secretos propios.
+
+3. **Web (Cloudflare)**: el `NEXT_PUBLIC_API_URL` se inyecta en build desde el propio
+   workflow (`deploy-web.yml`) y el dominio se define en `apps/web/wrangler.jsonc`. No
+   hace falta configurar nada más.
 4. **Cloudflare**: ten habilitado Containers en tu plan de Workers.
 5. **Push a `main`** → se despliega solo. (O lánzalo a mano con *Run workflow*.)
 
