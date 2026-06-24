@@ -11,13 +11,17 @@ interface RateLimitEntry {
 // In-memory fallback used only when Redis is unavailable.
 const store = new Map<string, RateLimitEntry>();
 
-// Clean up expired entries every 5 minutes
-setInterval(() => {
-  const now = Date.now();
+// Poda oportunista (sin setInterval global, que no es válido en Cloudflare Workers).
+// Se limpian las entradas vencidas como mucho una vez por minuto, en el flujo de un request.
+let lastPrune = 0;
+const PRUNE_INTERVAL_MS = 60_000;
+function prune(now: number) {
+  if (now - lastPrune < PRUNE_INTERVAL_MS) return;
+  lastPrune = now;
   for (const [key, entry] of store) {
     if (entry.resetAt <= now) store.delete(key);
   }
-}, 5 * 60 * 1000);
+}
 
 // X-Forwarded-For is client-controlled and trivially spoofable. Only honor it
 // when we are explicitly told we sit behind a trusted reverse proxy
@@ -77,6 +81,7 @@ async function incrementCounter(key: string, windowMs: number): Promise<CounterR
       error: message,
     });
     const now = Date.now();
+    prune(now);
     let entry = store.get(key);
     if (!entry || entry.resetAt <= now) {
       entry = { count: 0, resetAt: now + windowMs };

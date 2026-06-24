@@ -16,7 +16,7 @@ import { tenantMiddleware, requireBranch } from "../middleware/tenant.js";
 import { requirePermission } from "../middleware/rbac.js";
 import { generateQrCode } from "../lib/id.js";
 import { signCustomerToken } from "../lib/jwt.js";
-import { wsManager } from "../ws/manager.js";
+import { realtime } from "../infrastructure/container.js";
 import * as sessionService from "../services/session.service.js";
 
 const tables = new Hono<AppEnv>();
@@ -419,7 +419,7 @@ tables.patch(
     }
 
     // Broadcast table status change
-    await wsManager.publish(`branch:${tenant.branchId}`, {
+    await realtime.publish(`branch:${tenant.branchId}`, {
       type: "table:status",
       payload: { tableId: updated.id, number: updated.number, status: updated.status },
       timestamp: Date.now(),
@@ -535,7 +535,7 @@ tables.post(
     }
 
     // Broadcast: session is active and the table is now occupied
-    await wsManager.publish(`branch:${tenant.branchId}`, {
+    await realtime.publish(`branch:${tenant.branchId}`, {
       type: "session:started",
       payload: {
         sessionId: session.id,
@@ -685,12 +685,12 @@ tables.patch(
         .limit(1);
 
       // Broadcast approval
-      await wsManager.publish(`branch:${tenant.branchId}`, {
+      await realtime.publish(`branch:${tenant.branchId}`, {
         type: "session:approved",
         payload: { sessionId: id, tableId: result.tableId, tableNumber: table?.number },
         timestamp: Date.now(),
       });
-      await wsManager.publish(`session:${id}`, {
+      await realtime.publish(`session:${id}`, {
         type: "session:approved",
         payload: { sessionId: id, tableId: result.tableId, tableNumber: table?.number },
         timestamp: Date.now(),
@@ -736,12 +736,12 @@ tables.patch(
         .limit(1);
 
       // Broadcast rejection
-      await wsManager.publish(`branch:${tenant.branchId}`, {
+      await realtime.publish(`branch:${tenant.branchId}`, {
         type: "session:rejected",
         payload: { sessionId: id, tableId: result.tableId, tableNumber: table?.number },
         timestamp: Date.now(),
       });
-      await wsManager.publish(`session:${id}`, {
+      await realtime.publish(`session:${id}`, {
         type: "session:rejected",
         payload: { sessionId: id, tableId: result.tableId, tableNumber: table?.number },
         timestamp: Date.now(),
@@ -787,12 +787,12 @@ tables.patch(
         .limit(1);
 
       // Broadcast session ended
-      await wsManager.publish(`branch:${tenant.branchId}`, {
+      await realtime.publish(`branch:${tenant.branchId}`, {
         type: "session:ended",
         payload: { sessionId: id, tableId: result.tableId, tableNumber: table?.number },
         timestamp: Date.now(),
       });
-      await wsManager.publish(`session:${id}`, {
+      await realtime.publish(`session:${id}`, {
         type: "session:ended",
         payload: { sessionId: id, tableId: result.tableId, tableNumber: table?.number },
         timestamp: Date.now(),

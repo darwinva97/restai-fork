@@ -51,6 +51,13 @@ services:
       REDIS_URL: redis://redis:6379
       JWT_SECRET: ${JWT_SECRET}
       JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+      SUNAT_ENCRYPTION_KEY: ${SUNAT_ENCRYPTION_KEY}
+      REALTIME_PROVIDER: ${REALTIME_PROVIDER:-websocket}
+      PUSHER_APP_ID: ${PUSHER_APP_ID:-}
+      PUSHER_KEY: ${PUSHER_KEY:-}
+      PUSHER_SECRET: ${PUSHER_SECRET:-}
+      PUSHER_CLUSTER: ${PUSHER_CLUSTER:-}
+      ABLY_API_KEY: ${ABLY_API_KEY:-}
       CORS_ORIGINS: ${CORS_ORIGINS:-https://app.hosteleria.me}
       LOG_LEVEL: ${LOG_LEVEL:-info}
       # Behind Traefik/Coolify the X-Forwarded-For is set by the trusted proxy,

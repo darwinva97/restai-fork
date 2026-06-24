@@ -2,10 +2,24 @@ import { app } from "./app.js";
 import { logger } from "./lib/logger.js";
 import { redis } from "./lib/redis.js";
 import { verifyAccessToken } from "./lib/jwt.js";
-import { wsManager } from "./ws/manager.js";
+import { WebSocketManager } from "./infrastructure/realtime/websocket.adapter.js";
+import { createRealtimeProvider } from "./infrastructure/realtime/factory.js";
+import { Argon2Hasher } from "./infrastructure/security/argon2.adapter.js";
+import { useRealtime, useHasher } from "./infrastructure/container.js";
 import { handleWsMessage } from "./ws/handlers.js";
 import { expireStale } from "./services/session.service.js";
 import { expirePoints, awardBirthdayBonuses } from "./services/loyalty.service.js";
+
+// ── Composition root del runtime Bun (contenedor) ─────────────────────
+// Elige el proveedor realtime por entorno (REALTIME_PROVIDER) e inyecta argon2.
+// El servidor WebSocket propio solo se activa si el proveedor es "websocket";
+// con Pusher/Ably la entrega corre por el proveedor cloud y /ws queda deshabilitado.
+const realtimeProvider = createRealtimeProvider();
+useRealtime(realtimeProvider);
+useHasher(new Argon2Hasher());
+
+const wsManager =
+  realtimeProvider instanceof WebSocketManager ? realtimeProvider : null;
 
 const port = parseInt(process.env.API_PORT || "3001");
 
@@ -15,6 +29,12 @@ const server = Bun.serve({
   async fetch(req, server) {
     const url = new URL(req.url);
     if (url.pathname === "/ws") {
+      if (!wsManager) {
+        return new Response(
+          `WebSocket no habilitado (proveedor realtime: ${realtimeProvider.name}). Usa /api/realtime/config.`,
+          { status: 501 },
+        );
+      }
       // Verify JWT on upgrade.
       //
       // TRADEOFF (documented decision): the token travels in the URL query
@@ -43,29 +63,19 @@ const server = Bun.serve({
   },
   websocket: {
     async open(ws) {
+      if (!wsManager) return;
       const data = ws.data as any;
-      wsManager.addClient(data.id, ws, data.payload.sub, undefined, data.payload.exp);
-
-      // Auto-join rooms based on pre-verified token payload.
-      if (data.payload.role === "customer") {
-        // Customers must NOT join the branch-wide room: it carries every table's
-        // order events and would leak other diners' activity. They only receive
-        // their own session room (customer-relevant events are published to
-        // session:{table_session_id}) plus their own table room.
-        await wsManager.joinRoom(data.id, `session:${data.payload.sub}`);
-        if (data.payload.table) await wsManager.joinRoom(data.id, `table:${data.payload.table}`);
-      } else if (data.payload.branches) {
-        for (const branchId of data.payload.branches) {
-          await wsManager.joinRoom(data.id, `branch:${branchId}`);
-        }
-      }
-
-      ws.send(JSON.stringify({ type: "auth:success", userId: data.payload.sub, timestamp: Date.now() }));
+      // addClient + auto-join de salas + auth:success (lógica compartida con Node).
+      // El scoping de salas de cliente (NO branch-wide para clientes, para no
+      // filtrar la actividad de otras mesas) vive en WebSocketManager.register().
+      await wsManager.register(data.id, ws, data.payload);
     },
     message(ws, message) {
+      if (!wsManager) return;
       handleWsMessage(ws, String(message), wsManager);
     },
     close(ws) {
+      if (!wsManager) return;
       wsManager.removeClient((ws.data as any).id);
     },
   },
@@ -80,8 +90,10 @@ const sessionExpiryInterval = setInterval(() => {
   });
 }, 60_000);
 
-// WS heartbeat: evict clients with expired tokens (every 30 seconds)
+// WS heartbeat: evict clients with expired tokens (every 30 seconds).
+// Solo aplica al servidor WebSocket propio (proveedor websocket).
 const wsHeartbeatInterval = setInterval(() => {
+  if (!wsManager) return;
   const evicted = wsManager.evictExpired();
   if (evicted > 0) {
     logger.info("WS heartbeat: evicted expired clients", { count: evicted });
@@ -144,10 +156,15 @@ async function shutdown(signal: string) {
   clearInterval(pointsExpiryInterval);
   clearInterval(birthdayBonusInterval);
   server.stop();
-  try {
-    await redis.quit();
-  } catch {
-    // Redis may already be disconnected
+  // Cierra el coordinador del WS (subscriber de Redis, si aplica).
+  await wsManager?.close().catch(() => {});
+  // Solo cierra Redis si llegó a conectarse (en modo local nunca conecta).
+  if (redis.status === "ready" || redis.status === "connecting") {
+    try {
+      await redis.quit();
+    } catch {
+      // Redis may already be disconnected
+    }
   }
   logger.info("Server stopped");
   process.exit(0);

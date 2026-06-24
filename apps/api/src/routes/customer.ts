@@ -10,7 +10,7 @@ import {
 } from "@restai/validators";
 import { z } from "zod";
 import { signCustomerToken, verifyAccessToken } from "../lib/jwt.js";
-import { wsManager } from "../ws/manager.js";
+import { realtime } from "../infrastructure/container.js";
 import { findOrCreate } from "../services/customer.service.js";
 import { createOrder, OrderValidationError } from "../services/order.service.js";
 import { redeemReward } from "../services/loyalty.service.js";
@@ -220,7 +220,7 @@ customer.post(
       status: "pending",
     });
 
-    await wsManager.publish(`branch:${branch.id}`, {
+    await realtime.publish(`branch:${branch.id}`, {
       type: "session:pending",
       payload: { sessionId: session.id, tableId: table.id, tableNumber: table.number, customerName: body.customerName },
       timestamp: Date.now(),
@@ -441,7 +441,7 @@ customer.post(
     });
 
     // Broadcast pending session for staff approval
-    await wsManager.publish(`branch:${branch.id}`, {
+    await realtime.publish(`branch:${branch.id}`, {
       type: "session:pending",
       payload: { sessionId: session.id, tableId: table.id, tableNumber: table.number, customerName: body.customerName },
       timestamp: Date.now(),
@@ -846,7 +846,7 @@ customer.post("/orders", customerAuth, requireActiveSession, zValidator("json", 
   const { order, items: createdItems } = result;
 
   // Broadcast
-  await wsManager.publish(`branch:${branchId}`, {
+  await realtime.publish(`branch:${branchId}`, {
     type: "order:new",
     payload: {
       orderId: order.id,
@@ -862,7 +862,7 @@ customer.post("/orders", customerAuth, requireActiveSession, zValidator("json", 
     timestamp: Date.now(),
   });
 
-  await wsManager.publish(`session:${session.id}`, {
+  await realtime.publish(`session:${session.id}`, {
     type: "order:new",
     payload: {
       orderId: order.id,
@@ -1157,7 +1157,7 @@ customer.post(
     }
 
     // Broadcast cancellation
-    await wsManager.publish(`branch:${branchId}`, {
+    await realtime.publish(`branch:${branchId}`, {
       type: "order:cancelled",
       payload: {
         orderId: id,
@@ -1166,7 +1166,7 @@ customer.post(
       timestamp: Date.now(),
     });
     if (order.table_session_id) {
-      await wsManager.publish(`session:${order.table_session_id}`, {
+      await realtime.publish(`session:${order.table_session_id}`, {
         type: "order:cancelled",
         payload: {
           orderId: id,
@@ -1250,7 +1250,7 @@ customer.post(
     const eventType = action === "request_bill" ? "table:request_bill" : "table:call_waiter";
     const message = action === "request_bill" ? "La cuenta ha sido solicitada" : "El mozo ha sido llamado";
 
-    await wsManager.publish(`branch:${branchId}`, {
+    await realtime.publish(`branch:${branchId}`, {
       type: eventType,
       payload: {
         tableSessionId: activeSession.id,

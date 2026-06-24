@@ -7,3 +7,7 @@ const nextConfig: NextConfig = {
 };
 
 export default nextConfig;
+
+// Habilita el contexto de Cloudflare (bindings, env) durante `next dev`.
+import { initOpenNextCloudflareForDev } from "@opennextjs/cloudflare";
+initOpenNextCloudflareForDev();

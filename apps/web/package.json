@@ -7,7 +7,10 @@
     "dev": "next dev --port 3000",
     "build": "next build",
     "start": "next start",
-    "clean": "rm -rf .next"
+    "clean": "rm -rf .next",
+    "cf:build": "opennextjs-cloudflare build",
+    "cf:preview": "opennextjs-cloudflare build && opennextjs-cloudflare preview",
+    "cf:deploy": "opennextjs-cloudflare build && opennextjs-cloudflare deploy"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.0.0",
@@ -16,12 +19,13 @@
     "@restai/ui": "workspace:*",
     "@restai/validators": "workspace:*",
     "@tanstack/react-query": "^5.69.0",
+    "ably": "^2.6.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "date-fns": "^4.1.0",
     "hono": "^4.7.0",
     "lucide-react": "^0.475.0",
-    "next": "^16.1.6",
+    "next": "^16.2.9",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
@@ -34,11 +38,13 @@
     "zustand": "^5.0.0"
   },
   "devDependencies": {
+    "@opennextjs/cloudflare": "^1.19.11",
     "@tailwindcss/postcss": "^4.1.0",
     "@types/node": "^25.2.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "tailwindcss": "^4.1.0",
-    "typescript": "^5.8.0"
+    "typescript": "^5.8.0",
+    "wrangler": "^4.103.0"
   }
 }
