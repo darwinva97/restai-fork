@@ -211,6 +211,7 @@ customer.post(
     const token = await signCustomerToken({ sub: sessionId, org: branch.organization_id, branch: branch.id, table: table.id, customerId: customer_record.id });
 
     const session = await sessionService.createSession({
+      id: sessionId, // pin row id to token.sub (see createSession docs)
       tableId: table.id,
       branchId: branch.id,
       organizationId: branch.organization_id,
@@ -431,6 +432,7 @@ customer.post(
 
     // Create session with pending status
     const session = await sessionService.createSession({
+      id: sessionId, // pin row id to token.sub (see createSession docs)
       tableId: table.id,
       branchId: branch.id,
       organizationId: branch.organization_id,
